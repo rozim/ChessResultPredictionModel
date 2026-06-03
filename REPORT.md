@@ -6,7 +6,7 @@ win/draw/loss model described in [`DESIGN.md`](DESIGN.md).
 **Runs so far:**
 - **Run 1** — baseline: one file (twic210), terminal positions included → **51.8%** acc.
 - **Run 2** — more data (90 files) + decorrelated sampling + ply window → **57.3%** acc. *(current best)*
-- **Run 3** — `tiny` (0.93M) on the larger data: in progress (see §Run 3).
+- **Run 3** — `tiny` (0.93M) on 1/3 the data → **56.4%** acc: matches nano with far less data (capacity is data-efficient), but nano stays the model to ship.
 
 ## Run 1 — baseline (twic210 only, terminal positions included)
 
@@ -115,15 +115,54 @@ loss     5456   3460  17225     65.9%
   epoch 3 — identical to the 3-epoch run. nano (0.15M) has hit its capacity
   ceiling on this data, motivating Run 3.
 
-## Run 3 — larger model (`tiny`, 0.93M)  *(in progress)*
+## Run 3 — larger model (`tiny`, 0.93M)
 
-Testing whether more capacity beats nano's ~0.945 val / 57.3% acc now that the
-dataset is 5× larger (Run 1 showed `tiny` overfit on 143k). Practical note:
-`tiny` is slow here — **~5.5 s/step (CPU)**, **~3.7 s/step (Metal)** — dominated
-by the many small primitive ops (manual layer-norm/softmax) plus dataset size,
-not the device. To keep it CPU-tractable and the machine responsive, Run 3 uses
-a reduced training set (`positions-per-game=3`, **237,350** positions), batch
-512, `nice -n 19`. *Results to be appended.*
+Testing whether more capacity beats nano now that the dataset is larger (Run 1
+showed `tiny` overfit on 143k). Practical note: `tiny` is slow here —
+**~5.5 s/step (CPU)**, **~3.7 s/step (Metal)** — dominated by the many small
+primitive ops (manual layer-norm/softmax) plus dataset size, not the device. To
+keep it CPU-tractable and the machine responsive, Run 3 used a **reduced** train
+set (`positions-per-game=3`, **237,350** positions — 3.3× less than Run 2),
+batch 512, `nice -n 19`, 4 epochs (1,856 steps). Best val **0.9497**, T=1.127.
+
+### Held-out results (twic295–299, same eval set as Run 2)
+
+| Metric | nano Run 2 (781k) | **tiny Run 3 (237k)** | Material | Base-rate |
+|---|---|---|---|---|
+| **Accuracy** | **57.3%** | 56.4% | 40.5% | 37.4% |
+| **Log-loss** ↓ | **0.924** | 0.935 | 1.075 | 1.097 |
+| **Brier** ↓ | **0.548** | 0.557 | 0.650 | 0.665 |
+| **ECE** ↓ (T=1) | 2.0% | 1.1% | — | — |
+
+Confusion (tiny): win recall **70.8%**, draw **37.4%**, loss **57.3%**.
+
+```
+          win   draw   loss
+win     21205   4104   4662
+draw     9168   8999   5892
+loss     6836   4328  14977
+```
+
+### Interpretation (Run 3) — does bigger help?
+
+**Suggestive but not conclusive.** `tiny` (0.93M) trained on **one-third the
+data** lands at 56.4% acc / 0.935 log-loss — within ~1 point of nano's 57.3% /
+0.924 on full data. So the extra capacity roughly *compensated for 3.3× less
+data*, which hints `tiny` is the more data-efficient/capable model and would
+likely beat nano on equal data. We couldn't run that head-to-head: `tiny` on the
+full 781k is ~1.5 hr/epoch here, impractical for this session.
+
+Caveats: the comparison is confounded by **less data** and a **different class
+balance** in the reduced set (train 38.1/32.1/**29.8** win/draw/loss). The lower
+loss fraction shows up as `tiny`'s weaker **loss recall (57% vs nano's 66%)** —
+it under-predicts the under-represented class — while its **draw recall improved
+to 37%**. Both models stay well-calibrated at T=1 (ECE ~1–2%; the fitted
+temperature again slightly over-corrected).
+
+**Practical bottom line:** **nano remains the best model to ship** — equal or
+better held-out metrics at ~6× fewer params and far cheaper training. The
+larger model is promising but needs full-data training (and ideally a faster
+op-fused forward pass) to realize its edge.
 
 ## Notes on the M1 GPU path
 
