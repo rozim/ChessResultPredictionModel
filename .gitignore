@@ -22,6 +22,10 @@ target
 
 *~
 
+# Emacs auto-save and lock files
+\#*\#
+.\#*
+
 # Local training data (PGNs, shards, checkpoints) — not committed
 /data/
 /checkpoints/
