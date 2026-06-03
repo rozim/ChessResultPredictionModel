@@ -18,6 +18,8 @@ use crate::encoding::{encode_position, wdl_label, GameResult, Sample, N_SQUARES}
 #[derive(Debug, Clone)]
 pub struct PrepareFilter {
     pub min_ply: u32,
+    /// Only keep positions with ply <= max_ply (skips the late, drawn-out phase).
+    pub max_ply: u32,
     pub min_game_plies: u32,
     pub min_elo: u16,
     pub max_elo: u16,
@@ -30,6 +32,7 @@ impl Default for PrepareFilter {
     fn default() -> Self {
         PrepareFilter {
             min_ply: 0,
+            max_ply: u32::MAX,
             min_game_plies: 0,
             min_elo: 0,
             max_elo: 4000,
@@ -110,9 +113,9 @@ impl SampleCollector {
             return;
         }
 
-        // Candidate position indices passing the per-position ply filter.
+        // Candidate position indices passing the per-position ply window.
         let mut idxs: Vec<usize> = (0..mt.raw.len())
-            .filter(|&i| mt.raw[i].4 >= self.filter.min_ply)
+            .filter(|&i| mt.raw[i].4 >= self.filter.min_ply && mt.raw[i].4 <= self.filter.max_ply)
             .collect();
         if let Some(cap) = self.filter.positions_per_game {
             if idxs.len() > cap && cap > 0 {

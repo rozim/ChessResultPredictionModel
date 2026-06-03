@@ -19,6 +19,9 @@ struct Args {
     /// Only keep positions at least this many plies into the game.
     #[arg(long, default_value_t = 0)]
     min_ply: u32,
+    /// Only keep positions up to this many plies in (skips drawn-out late phase).
+    #[arg(long, default_value_t = u32::MAX)]
+    max_ply: u32,
     /// Drop entire games shorter than this many plies.
     #[arg(long, default_value_t = 0)]
     min_game_plies: u32,
@@ -45,6 +48,7 @@ fn main() -> Result<()> {
 
     let filter = PrepareFilter {
         min_ply: args.min_ply,
+        max_ply: args.max_ply,
         min_game_plies: args.min_game_plies,
         min_elo: args.min_elo,
         max_elo: args.max_elo,
