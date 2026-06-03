@@ -1,9 +1,16 @@
 # Chess WDL Prediction — Results Report
 
-First end-to-end training and held-out evaluation of the Chessformer/Maia-3-inspired
+End-to-end training and held-out evaluation of the Chessformer/Maia-3-inspired
 win/draw/loss model described in [`DESIGN.md`](DESIGN.md).
 
-## Setup
+**Runs so far:**
+- **Run 1** — baseline: one file (twic210), terminal positions included → **51.8%** acc.
+- **Run 2** — more data (90 files) + decorrelated sampling + ply window → **57.3%** acc. *(current best)*
+- **Run 3** — `tiny` (0.93M) on the larger data: in progress (see §Run 3).
+
+## Run 1 — baseline (twic210 only, terminal positions included)
+
+### Setup
 
 | | |
 |---|---|
@@ -15,7 +22,7 @@ win/draw/loss model described in [`DESIGN.md`](DESIGN.md).
 | **Training** | CPU, batch 512, AdamW lr 3e-4 (cosine + warmup), label smoothing 0.05, 6 epochs (1,686 steps) |
 | **Best val** | log-loss **1.0106** at step 1,405; fitted calibration temperature **T = 1.05** |
 
-## Held-out results (twic212, 81,528 unseen positions)
+### Held-out results (twic212, 81,528 unseen positions)
 
 | Metric | **Model** (calibrated) | Material baseline | Base-rate | Uniform |
 |---|---|---|---|---|
@@ -33,7 +40,7 @@ draw     7549   7187  10123     28.9%
 loss     5009   4282  19160     67.3%
 ```
 
-## Interpretation
+### Interpretation (Run 1)
 
 **The model works and clearly beats every baseline.** Always guessing the most
 common class scores 34.9%; a material-only logistic gets 42.9%; the model reaches
@@ -61,6 +68,62 @@ genuine positional structure beyond material count.
 intrinsically noisy, so ~52% accuracy with excellent calibration is a sound,
 honest outcome for this dataset, and the architecture is doing real work rather
 than memorizing.
+
+## Run 2 — more data + decorrelated sampling (current best)
+
+### Setup
+
+| | |
+|---|---|
+| **Train** | twic210–289 (80 files) → **781,487** positions |
+| **Validation** | twic290–294 (5 files) → 62,909 |
+| **Held-out eval** | twic295–299 (5 files) → 80,171 |
+| **Sampling** | `--min-ply 20 --max-ply 100 --positions-per-game 10` (decorrelate within games; drop opening + drawn-out tails) |
+| **Model** | `configs/nano.toml` (0.15M), same as Run 1 |
+| **Training** | CPU, batch 1024, lr 5e-4, 3 epochs (2,292 steps), `nice -n 19`; best val 0.9446, T=1.056 |
+
+Class balance improved vs Run 1 (train 36.4/31.4/32.2 win/draw/loss): dropping
+terminal positions removed the loss-bias, and the ply window raised the draw rate.
+
+### Held-out results (twic295–299, 80,171 unseen positions)
+
+| Metric | **Run 2** (nano) | Run 1 (nano) | Material | Base-rate |
+|---|---|---|---|---|
+| **Accuracy** | **57.3%** | 51.8% | 43.0% | 37.4% |
+| **Log-loss** ↓ | **0.924** | 0.985 | 1.073 | 1.095 |
+| **Brier** ↓ | **0.548** | 0.590 | 0.646 | 0.664 |
+| **ECE** ↓ | **2.0%** | 1.8% | — | — |
+
+Confusion matrix (rows = true, cols = predicted):
+
+```
+          win   draw   loss     recall
+win     20391   3955   5625     68.0%
+draw     8359   8334   7366     34.6%
+loss     5456   3460  17225     65.9%
+```
+
+### Interpretation (Run 2)
+
+- **+5.5 points accuracy (51.8 → 57.3%)** from data alone (same 0.15M model):
+  more independent games + decorrelated sampling = more signal, less memorization.
+- **Draw recall 29% → 35%** and **win/loss now symmetric (68/66%)** — the Run 1
+  loss-bias artifact is gone, exactly as predicted from dropping terminal positions.
+- Still **well-calibrated** (ECE 2.0%); the fitted T=1.056 was essentially a no-op
+  (at T=1, ECE is 1.97%), so the model is *intrinsically* calibrated.
+- **More epochs don't help nano:** a 10-epoch run plateaued at val ~0.945 by
+  epoch 3 — identical to the 3-epoch run. nano (0.15M) has hit its capacity
+  ceiling on this data, motivating Run 3.
+
+## Run 3 — larger model (`tiny`, 0.93M)  *(in progress)*
+
+Testing whether more capacity beats nano's ~0.945 val / 57.3% acc now that the
+dataset is 5× larger (Run 1 showed `tiny` overfit on 143k). Practical note:
+`tiny` is slow here — **~5.5 s/step (CPU)**, **~3.7 s/step (Metal)** — dominated
+by the many small primitive ops (manual layer-norm/softmax) plus dataset size,
+not the device. To keep it CPU-tractable and the machine responsive, Run 3 uses
+a reduced training set (`positions-per-game=3`, **237,350** positions), batch
+512, `nice -n 19`. *Results to be appended.*
 
 ## Notes on the M1 GPU path
 
