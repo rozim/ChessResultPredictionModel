@@ -1,0 +1,19 @@
+# small — ~5M params (mirrors Maia-3-5M). For larger corpora / M1 dev (§3.6).
+name = "small"
+
+[model]
+d_model          = 256
+layers           = 8
+num_heads        = 8
+ffn_dim          = 1024
+head_hidden      = 128
+elo_conditioning = true
+elo_embed_dim    = 128
+dropout          = 0.1
+pos_encoding     = "gab"
+
+[gab]
+avg_pool       = true
+per_square_dim = 0      # ignored when avg_pool = true
+compress_dim   = 256
+templates      = 32

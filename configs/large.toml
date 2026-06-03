@@ -1,0 +1,19 @@
+# large — ~79M params (mirrors Maia-3-79M). Only worthwhile with lots of data (§3.6).
+name = "large"
+
+[model]
+d_model          = 512
+layers           = 16
+num_heads        = 16
+ffn_dim          = 2048
+head_hidden      = 128
+elo_conditioning = true
+elo_embed_dim    = 128
+dropout          = 0.1
+pos_encoding     = "gab"
+
+[gab]
+avg_pool       = false
+per_square_dim = 8      # d1: per-square projection before flatten
+compress_dim   = 512
+templates      = 64

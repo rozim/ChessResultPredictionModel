@@ -1,0 +1,21 @@
+# nano — ~0.15M params. Smallest config; for the tiny TWIC corpus where the
+# 0.93M `tiny` model overfits almost immediately. Higher dropout for extra
+# regularization. Intended for fast CPU training.
+name = "nano"
+
+[model]
+d_model          = 64
+layers           = 2
+num_heads        = 2
+ffn_dim          = 256
+head_hidden      = 32
+elo_conditioning = true
+elo_embed_dim    = 32
+dropout          = 0.2
+pos_encoding     = "gab"
+
+[gab]
+avg_pool       = true
+per_square_dim = 0     # ignored when avg_pool = true
+compress_dim   = 64
+templates      = 8

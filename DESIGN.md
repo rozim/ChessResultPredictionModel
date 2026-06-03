@@ -1,9 +1,18 @@
 # Chess WDL Prediction Model — Design & Implementation Plan
 
-Status: **Reviewed — design locked, implementation not started.** The major
-choices are settled (Candle+Metal, softmax WDL, **value-only**, TWIC corpus);
-see the resolution log in [§12](#12-resolved-decisions). A few defaulted
-minor points are noted there too.
+Status: **Implemented.** A first end-to-end run is complete — see
+[`REPORT.md`](REPORT.md) for results and [`CLAUDE.md`](CLAUDE.md) for the build
+commands and code map. Design choices are settled in the resolution log in
+[§12](#12-resolved-decisions).
+
+**Deviations from this design, as built** (rationale in `CLAUDE.md`):
+- Single Cargo package (lib + 4 binaries), not the multi-crate workspace of §5 —
+  collapsed for iteration speed; module boundaries match §5.
+- Added a smaller `configs/nano.toml` (~0.15M): the §3.6 `tiny` (0.93M) overfit
+  the ~1,890-game corpus within one epoch, so `nano` is the working default.
+- Candle's Metal backend has no fused `layer_norm`/`softmax`/`cross_entropy`
+  kernels, so those are reimplemented from primitive ops (still GPU-resident).
+  Batch ≥1024 hangs on Metal; the reported run used CPU for responsiveness.
 
 ---
 

@@ -1,0 +1,19 @@
+# medium — ~23M params (mirrors Maia-3-23M). M1-capable but slower (§3.6).
+name = "medium"
+
+[model]
+d_model          = 384
+layers           = 12
+num_heads        = 12
+ffn_dim          = 1536
+head_hidden      = 128
+elo_conditioning = true
+elo_embed_dim    = 128
+dropout          = 0.1
+pos_encoding     = "gab"
+
+[gab]
+avg_pool       = false  # full projection variant at this scale
+per_square_dim = 8      # d1: per-square projection before flatten
+compress_dim   = 384
+templates      = 32

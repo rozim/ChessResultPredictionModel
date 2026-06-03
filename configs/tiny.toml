@@ -1,0 +1,20 @@
+# tiny — ~0.8M params. Default for the small TWIC corpus (§3.6, §6.1).
+# Architecture only; training hyperparameters stay as chess-wdl-train-cli flags.
+name = "tiny"
+
+[model]
+d_model          = 128    # embedding / hidden width
+layers           = 4      # encoder blocks
+num_heads        = 4      # attention heads (must divide d_model)
+ffn_dim          = 512    # feed-forward hidden width
+head_hidden      = 64     # WDL value-head hidden width
+elo_conditioning = true   # use self/opponent Elo embeddings
+elo_embed_dim    = 128    # strength embedding dim (when elo_conditioning)
+dropout          = 0.1    # attention/FFN dropout (training only; off at inference)
+pos_encoding     = "gab"  # "gab" | "learned_bias" | "none"
+
+[gab]                     # used only when pos_encoding = "gab"
+avg_pool       = true     # average-pool variant (cheaper; recommended at small scale)
+per_square_dim = 0        # d1: ignored when avg_pool = true
+compress_dim   = 128      # d2: compressed board representation
+templates      = 16       # d3: number of attention-bias templates
