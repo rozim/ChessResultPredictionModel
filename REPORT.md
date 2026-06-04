@@ -8,6 +8,7 @@ win/draw/loss model described in [`DESIGN.md`](DESIGN.md).
 - **Run 2** — more data (90 files) + decorrelated sampling + ply window → **57.3%** acc. *(best on the broad-Elo distribution)*
 - **Run 3** — `tiny` (0.93M) on 1/3 the data → **56.4%** acc: matches nano with far less data (capacity is data-efficient), but nano stays the model to ship.
 - **Run 4** — strict Elo filter (both 2400–2899) → harder, 48%-draw distribution: **53.8%** acc, but the model becomes draw-biased (see §Run 4).
+- **Run 5** — Elo removed from the model (board-only input). 5a: **51.9%** acc (Elo removal costs ~2 pts — the within-band rating *difference* did carry signal). 5b: + `--draw-weighting` rebalances recall (loss 23→31%) at a small accuracy/calibration cost (see §Run 5).
 
 ## Run 1 — baseline (twic210 only, terminal positions included)
 
@@ -209,6 +210,40 @@ loss      325   1984   1246
 - Motivates two follow-ups: optional **draw/class weighting** to rebalance
   win/loss recall, and **removing Elo as an input** (the band is now fixed to
   strong GMs, so the Elo embedding carries no signal — simplify the model).
+
+## Run 5 — Elo removed from the model (± draw-weighting)
+
+Same Elo-filtered data as Run 4 (`data/shards3/`, 48% draws), `nano`, CPU,
+`nice -n 19`. The model input is now **board-only** (`input_dim = 18`; no Elo
+embedding). 5a is the Elo-free baseline; 5b adds `--draw-weighting`
+(inverse-frequency class weights: win 1.14, draw 0.72, loss 1.37).
+
+### Held-out results (twic295–299, 14,738 positions)
+
+| Metric | Run 4 (with Elo) | **5a** (Elo-free) | **5b** (Elo-free + draw-wt) | Base-rate |
+|---|---|---|---|---|
+| **Accuracy** | 53.8% | **51.9%** | 50.9% | 47.7% |
+| **Log-loss** ↓ | 0.957 | **0.998** | 1.026 | 1.054 |
+| **Brier** ↓ | 0.575 | **0.597** | 0.615 | 0.635 |
+| **ECE** ↓ (T=1) | 1.1% | 1.7% | 5.6% | — |
+| **Recall** win/draw/loss | 27/79/35 | 30/80/23 | **32/72/31** | — |
+
+### Interpretation (Run 5)
+
+- **Removing Elo cost ~2 points accuracy and ~0.04 log-loss** (53.8 → 51.9%,
+  0.957 → 0.998). So the assumption "Elo is constant within the filtered band,
+  therefore no signal" is only *partly* true: the **rating difference** between
+  the two players (e.g. 2850 vs 2420) is mildly predictive of a decisive result.
+  Removing it is a reasonable simplification — board-only is cleaner and still
+  well clear of baselines — but it isn't free.
+- **`--draw-weighting` rebalances recall** as designed: loss recall **23 → 31%**,
+  win **30 → 32%**, draw **80 → 72%** (the model predicts draw for ~61% of
+  positions instead of ~69%). The price is ~1 pt accuracy, worse log-loss, and
+  worse calibration (ECE 1.7 → 5.6%) — it deliberately stops optimizing the true
+  class distribution. Use it when balanced win/loss recall matters more than raw
+  accuracy or calibrated probabilities; leave it off (default) otherwise.
+- **Best model overall remains Run 2** (broad-Elo data, 57.3% acc). On the
+  elite-GM distribution the task is simply harder and draw-dominated.
 
 ## Notes on the M1 GPU path
 
