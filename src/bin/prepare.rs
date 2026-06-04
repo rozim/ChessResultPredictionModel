@@ -31,6 +31,9 @@ struct Args {
     /// Drop games with either player rated above this.
     #[arg(long, default_value_t = 4000)]
     max_elo: u16,
+    /// Drop games missing either WhiteElo or BlackElo tag.
+    #[arg(long, default_value_t = false)]
+    require_elo: bool,
     /// Cap sampled positions per game (evenly spaced).
     #[arg(long)]
     positions_per_game: Option<usize>,
@@ -52,6 +55,7 @@ fn main() -> Result<()> {
         min_game_plies: args.min_game_plies,
         min_elo: args.min_elo,
         max_elo: args.max_elo,
+        require_both_elo: args.require_elo,
         positions_per_game: args.positions_per_game,
         default_elo: args.default_elo,
     };

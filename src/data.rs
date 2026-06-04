@@ -23,6 +23,8 @@ pub struct PrepareFilter {
     pub min_game_plies: u32,
     pub min_elo: u16,
     pub max_elo: u16,
+    /// If true, drop games missing either WhiteElo or BlackElo tag.
+    pub require_both_elo: bool,
     pub positions_per_game: Option<usize>,
     /// Sentinel rating used when a game is missing WhiteElo/BlackElo.
     pub default_elo: u16,
@@ -36,6 +38,7 @@ impl Default for PrepareFilter {
             min_game_plies: 0,
             min_elo: 0,
             max_elo: 4000,
+            require_both_elo: false,
             positions_per_game: None,
             default_elo: 1500,
         }
@@ -98,6 +101,13 @@ impl SampleCollector {
         };
         if !mt.valid {
             self.stats.games_dropped_illegal += 1;
+            return;
+        }
+
+        if self.filter.require_both_elo
+            && (mt.meta.white_elo.is_none() || mt.meta.black_elo.is_none())
+        {
+            self.stats.games_dropped_filtered += 1;
             return;
         }
 
@@ -379,6 +389,32 @@ mod tests {
         let (samples, stats) = prepare_pgn(&path, PrepareFilter::default()).unwrap();
         assert_eq!(stats.games_dropped_unlabeled, 1);
         assert!(samples.is_empty());
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn require_elo_and_range_filter() {
+        // g1: both Elos in [2400,2900) -> kept. g2: missing BlackElo -> dropped.
+        // g3: BlackElo too high (2950) -> dropped.
+        let pgn = concat!(
+            "[Result \"1-0\"]\n[WhiteElo \"2500\"]\n[BlackElo \"2450\"]\n\n1. e4 e5 1-0\n\n",
+            "[Result \"1-0\"]\n[WhiteElo \"2500\"]\n\n1. e4 e5 1-0\n\n",
+            "[Result \"1-0\"]\n[WhiteElo \"2500\"]\n[BlackElo \"2950\"]\n\n1. e4 e5 1-0\n"
+        );
+        let dir = std::env::temp_dir().join(format!("cwdl-pgn3-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("g.pgn");
+        std::fs::write(&path, pgn).unwrap();
+        let filter = PrepareFilter {
+            require_both_elo: true,
+            min_elo: 2400,
+            max_elo: 2899,
+            ..Default::default()
+        };
+        let (_samples, stats) = prepare_pgn(&path, filter).unwrap();
+        assert_eq!(stats.games_seen, 3);
+        assert_eq!(stats.games_kept, 1);
+        assert_eq!(stats.games_dropped_filtered, 2);
         std::fs::remove_file(&path).ok();
     }
 }
