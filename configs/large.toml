@@ -7,8 +7,6 @@ layers           = 16
 num_heads        = 16
 ffn_dim          = 2048
 head_hidden      = 128
-elo_conditioning = true
-elo_embed_dim    = 128
 dropout          = 0.1
 pos_encoding     = "gab"
 

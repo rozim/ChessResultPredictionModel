@@ -97,18 +97,31 @@ fn log_softmax_lastdim(x: &Tensor) -> Result<Tensor> {
 }
 
 /// WDL cross-entropy with optional label smoothing. `targets`: [B] u32.
-pub fn wdl_loss(logits: &Tensor, targets: &Tensor, smoothing: f32) -> Result<Tensor> {
+pub fn wdl_loss(
+    logits: &Tensor,
+    targets: &Tensor,
+    smoothing: f32,
+    class_weights: Option<&Tensor>,
+) -> Result<Tensor> {
     let logp = log_softmax_lastdim(logits)?; // [B, 3]
-                                             // NLL on the true class via gather.
-    let picked = logp.gather(&targets.unsqueeze(1)?, 1)?.squeeze(1)?; // [B]
-    let nll = picked.neg()?.mean(0)?; // scalar
-    if smoothing <= 0.0 {
-        return Ok(nll);
+    let picked = logp.gather(&targets.unsqueeze(1)?, 1)?.squeeze(1)?; // [B] log p[y]
+    let per = if smoothing <= 0.0 {
+        picked.neg()?
+    } else {
+        // Smoothing mixes in a uniform target: eps * mean over classes of -log p.
+        let uniform = logp.mean(D::Minus1)?.neg()?; // [B]
+        ((picked.neg()? * (1.0 - smoothing) as f64)? + (uniform * smoothing as f64)?)?
+    };
+    match class_weights {
+        None => Ok(per.mean(0)?),
+        Some(w) => {
+            // Weighted mean: Σ(w[y]·loss) / Σ(w[y]).
+            let wp = w.index_select(targets, 0)?; // [B]
+            let num = (per * &wp)?.sum(0)?;
+            let den = wp.sum(0)?;
+            Ok(num.broadcast_div(&den)?)
+        }
     }
-    // Smoothing mixes in a uniform target: eps * mean over classes of -log p.
-    let uniform = logp.mean(D::Minus1)?.neg()?.mean(0)?; // scalar
-    let total = ((nll * (1.0 - smoothing) as f64)? + (uniform * smoothing as f64)?)?;
-    Ok(total)
 }
 
 /// Raw [B,3] logits for many samples, in batches, on the model's device.
@@ -126,4 +139,35 @@ pub fn predict_logits(
         }
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use candle_core::Tensor;
+
+    #[test]
+    fn class_weights_change_the_loss() {
+        let dev = Device::Cpu;
+        // Sample 0 (label 0): confident & correct -> low loss.
+        // Sample 1 (label 1): uniform logits -> high loss (ln 3).
+        // Distinct per-sample losses, so class weighting shifts the mean.
+        let logits = Tensor::from_vec(vec![5f32, 0., 0., 0., 0., 0.], (2, 3), &dev).unwrap();
+        let targets = Tensor::from_vec(vec![0u32, 1], 2, &dev).unwrap();
+        let unweighted = wdl_loss(&logits, &targets, 0.0, None)
+            .unwrap()
+            .to_scalar::<f32>()
+            .unwrap();
+        // Up-weight class 1 by 5x -> the weighted mean shifts toward sample 1's loss.
+        let w = Tensor::from_vec(vec![1f32, 5., 1.], 3, &dev).unwrap();
+        let weighted = wdl_loss(&logits, &targets, 0.0, Some(&w))
+            .unwrap()
+            .to_scalar::<f32>()
+            .unwrap();
+        assert!(unweighted.is_finite() && weighted.is_finite());
+        assert!(
+            (unweighted - weighted).abs() > 1e-5,
+            "weighting had no effect"
+        );
+    }
 }

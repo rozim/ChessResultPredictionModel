@@ -57,15 +57,13 @@ impl Ln {
     }
 }
 
-/// A tensorized minibatch on a device.
+/// A tensorized minibatch on a device. The board is the only model input —
+/// player Elo is deliberately not used (corpus is a fixed strong-GM band).
 pub struct Batch {
     /// [B, 64, 12] one-hot occupancy.
     pub planes: Tensor,
     /// [B, AUX_DIM] aux features (broadcast across tokens inside the model).
     pub aux: Tensor,
-    /// [B] side-to-move and opponent Elo as f32.
-    pub self_elo: Tensor,
-    pub oppo_elo: Tensor,
     /// [B] u32 labels (only meaningful for training/eval).
     pub labels: Tensor,
     pub len: usize,
@@ -76,8 +74,6 @@ impl Batch {
         let b = samples.len();
         let mut planes = vec![0f32; b * N_SQUARES * N_PIECE_PLANES];
         let mut aux = vec![0f32; b * AUX_DIM];
-        let mut self_elo = vec![0f32; b];
-        let mut oppo_elo = vec![0f32; b];
         let mut labels = vec![0u32; b];
 
         for (i, s) in samples.iter().enumerate() {
@@ -90,49 +86,15 @@ impl Batch {
                 }
             }
             aux[i * AUX_DIM..(i + 1) * AUX_DIM].copy_from_slice(&s.aux_f32());
-            self_elo[i] = s.self_elo as f32;
-            oppo_elo[i] = s.oppo_elo as f32;
             labels[i] = if s.wdl == 255 { 0 } else { s.wdl as u32 };
         }
 
         Ok(Batch {
             planes: Tensor::from_vec(planes, (b, N_SQUARES, N_PIECE_PLANES), device)?,
             aux: Tensor::from_vec(aux, (b, AUX_DIM), device)?,
-            self_elo: Tensor::from_vec(self_elo, b, device)?,
-            oppo_elo: Tensor::from_vec(oppo_elo, b, device)?,
             labels: Tensor::from_vec(labels, b, device)?,
             len: b,
         })
-    }
-}
-
-/// Learned Elo embedding via interpolation between weak/strong endpoints.
-struct EloEmbedding {
-    weak: Tensor,   // [elo_dim]
-    strong: Tensor, // [elo_dim]
-    dim: usize,
-}
-
-impl EloEmbedding {
-    fn new(dim: usize, vb: VarBuilder) -> Result<Self> {
-        let init = Init::Randn {
-            mean: 0.0,
-            stdev: 0.02,
-        };
-        let weak = vb.get_with_hints(dim, "weak", init)?;
-        let strong = vb.get_with_hints(dim, "strong", init)?;
-        Ok(EloEmbedding { weak, strong, dim })
-    }
-
-    /// elo: [B] f32 ratings -> [B, dim] embeddings.
-    fn embed(&self, elo: &Tensor) -> Result<Tensor> {
-        let b = elo.dim(0)?;
-        // gamma = 1 - k/5000 (already in [0,1] for any rating in 0..5000).
-        let gamma = elo.affine(-1.0 / 5000.0, 1.0)?.reshape((b, 1))?;
-        let diff = (&self.weak - &self.strong)?.reshape((1, self.dim))?; // [1, dim]
-        let strong = self.strong.reshape((1, self.dim))?;
-        // strong + gamma * (weak - strong)
-        strong.broadcast_add(&gamma.broadcast_mul(&diff)?)
     }
 }
 
@@ -267,7 +229,6 @@ impl EncoderBlock {
 
 pub struct ChessWdlModel {
     input_proj: Linear,
-    elo: Option<EloEmbedding>,
     pos_bias: PosBias,
     blocks: Vec<EncoderBlock>,
     head_ln: Ln,
@@ -281,11 +242,6 @@ impl ChessWdlModel {
     pub fn new(cfg: &ModelConfig, vb: VarBuilder, device: &Device) -> Result<Self> {
         let d = cfg.model.d_model;
         let input_proj = linear(cfg.input_dim(), d, vb.pp("input_proj"))?;
-        let elo = if cfg.model.elo_conditioning {
-            Some(EloEmbedding::new(cfg.model.elo_embed_dim, vb.pp("elo"))?)
-        } else {
-            None
-        };
         let pos_bias = match cfg.model.pos_encoding {
             PosEncoding::Gab => PosBias::Gab(Gab::new(cfg, vb.pp("gab"))?),
             PosEncoding::LearnedBias => {
@@ -307,7 +263,6 @@ impl ChessWdlModel {
         let head2 = linear(cfg.model.head_hidden, 3, vb.pp("head2"))?;
         Ok(ChessWdlModel {
             input_proj,
-            elo,
             pos_bias,
             blocks,
             head_ln,
@@ -327,28 +282,15 @@ impl ChessWdlModel {
     }
 
     /// Build the per-token input features [B, 64, input_dim] then project.
+    /// Features are occupancy planes + (broadcast) aux state only — no Elo.
     fn embed_input(&self, batch: &Batch) -> Result<Tensor> {
         let b = batch.len;
-        let mut parts = vec![batch.planes.clone()]; // [B,64,12]
         let aux = batch
             .aux
             .unsqueeze(1)?
-            .broadcast_as((b, N_SQUARES, AUX_DIM))?;
-        parts.push(aux.contiguous()?);
-        if let Some(elo) = &self.elo {
-            let dim = self.cfg.model.elo_embed_dim;
-            let es = elo
-                .embed(&batch.self_elo)?
-                .unsqueeze(1)?
-                .broadcast_as((b, N_SQUARES, dim))?;
-            let eo = elo
-                .embed(&batch.oppo_elo)?
-                .unsqueeze(1)?
-                .broadcast_as((b, N_SQUARES, dim))?;
-            parts.push(es.contiguous()?);
-            parts.push(eo.contiguous()?);
-        }
-        let x = Tensor::cat(&parts, D::Minus1)?; // [B,64,input_dim]
+            .broadcast_as((b, N_SQUARES, AUX_DIM))?
+            .contiguous()?;
+        let x = Tensor::cat(&[batch.planes.clone(), aux], D::Minus1)?; // [B,64,18]
         self.input_proj.forward(&x)
     }
 

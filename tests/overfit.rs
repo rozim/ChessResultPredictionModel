@@ -60,20 +60,23 @@ fn assert_memorizes(config: &str, samples: &[Sample], steps: usize, lr: f64, max
     };
     let mut opt = AdamW::new(
         varmap.all_vars(),
-        ParamsAdamW { lr, ..Default::default() },
+        ParamsAdamW {
+            lr,
+            ..Default::default()
+        },
     )
     .expect("optimizer");
 
     let batch = Batch::from_samples(samples, &device).expect("batch");
     for _ in 0..steps {
         let logits = model.forward(&batch, true).expect("forward");
-        let loss = wdl_loss(&logits, &batch.labels, 0.0).expect("loss");
+        let loss = wdl_loss(&logits, &batch.labels, 0.0, None).expect("loss");
         opt.backward_step(&loss).expect("step");
     }
 
     // Evaluate with dropout off.
     let logits = model.forward(&batch, false).expect("eval forward");
-    let eval_loss = wdl_loss(&logits, &batch.labels, 0.0)
+    let eval_loss = wdl_loss(&logits, &batch.labels, 0.0, None)
         .expect("eval loss")
         .to_scalar::<f32>()
         .expect("scalar");

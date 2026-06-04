@@ -30,26 +30,23 @@ struct Args {
     /// Read FENs from stdin, one per line.
     #[arg(long, default_value_t = false)]
     batch: bool,
-    #[arg(long, default_value_t = 1500)]
-    self_elo: u16,
-    #[arg(long, default_value_t = 1500)]
-    oppo_elo: u16,
     #[arg(long, default_value_t = false)]
     json: bool,
     #[arg(long, default_value = "metal")]
     device: String,
 }
 
-fn sample_from_fen(fen: &str, self_elo: u16, oppo_elo: u16) -> Result<Sample> {
+fn sample_from_fen(fen: &str) -> Result<Sample> {
     let pos: Chess =
         Fen::from_ascii(fen.trim().as_bytes())?.into_position(CastlingMode::Standard)?;
     let (squares, castling, ep_file) = encode_position(&pos);
+    // Elo fields are unused by the model; kept for shard-format compatibility.
     Ok(Sample {
         squares,
         castling,
         ep_file,
-        self_elo,
-        oppo_elo,
+        self_elo: 0,
+        oppo_elo: 0,
         wdl: 255,
     })
 }
@@ -75,7 +72,7 @@ fn main() -> Result<()> {
     let t = meta.temperature;
 
     if let Some(fen) = &args.fen {
-        let s = sample_from_fen(fen, args.self_elo, args.oppo_elo)?;
+        let s = sample_from_fen(fen)?;
         let logits = predict_logits(&model, &[s], 1)?;
         emit("fen", metrics::apply_temperature(&logits, t)[0], args.json);
     } else if let Some(pgn) = &args.pgn {
@@ -98,10 +95,7 @@ fn main() -> Result<()> {
                 fens.push(line);
             }
         }
-        let samples: Result<Vec<Sample>> = fens
-            .iter()
-            .map(|f| sample_from_fen(f, args.self_elo, args.oppo_elo))
-            .collect();
+        let samples: Result<Vec<Sample>> = fens.iter().map(|f| sample_from_fen(f)).collect();
         let samples = samples?;
         let logits = predict_logits(&model, &samples, 1024)?;
         let probs = metrics::apply_temperature(&logits, t);

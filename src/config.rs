@@ -19,10 +19,6 @@ pub struct Model {
     pub num_heads: usize,
     pub ffn_dim: usize,
     pub head_hidden: usize,
-    #[serde(default = "default_true")]
-    pub elo_conditioning: bool,
-    #[serde(default = "default_elo_dim")]
-    pub elo_embed_dim: usize,
     #[serde(default)]
     pub dropout: f64,
     #[serde(default = "default_pos_encoding")]
@@ -65,9 +61,6 @@ impl Default for Gab {
 
 fn default_true() -> bool {
     true
-}
-fn default_elo_dim() -> usize {
-    128
 }
 fn default_compress() -> usize {
     128
@@ -113,9 +106,6 @@ impl ModelConfig {
                 m.d_model
             );
         }
-        if m.elo_conditioning && m.elo_embed_dim == 0 {
-            bail!("elo_embed_dim must be > 0 when elo_conditioning = true");
-        }
         if m.pos_encoding == PosEncoding::Gab {
             if self.gab.compress_dim == 0 || self.gab.templates == 0 {
                 bail!("gab.compress_dim and gab.templates must be > 0");
@@ -127,14 +117,12 @@ impl ModelConfig {
         Ok(())
     }
 
-    /// Per-token input feature width fed to the input projection.
-    /// 12 occupancy planes + 6 aux features + (2 x elo_embed_dim when enabled).
+    /// Per-token input feature width fed to the input projection:
+    /// 12 occupancy planes + 6 aux features. The board is the only signal —
+    /// player Elo is deliberately not used (the corpus is filtered to a fixed
+    /// strong-GM band, so Elo carries no information).
     pub fn input_dim(&self) -> usize {
-        let mut d = crate::encoding::N_PIECE_PLANES + crate::encoding::AUX_DIM;
-        if self.model.elo_conditioning {
-            d += 2 * self.model.elo_embed_dim;
-        }
-        d
+        crate::encoding::N_PIECE_PLANES + crate::encoding::AUX_DIM
     }
 }
 
@@ -149,7 +137,6 @@ mod tests {
         assert_eq!(cfg.model.d_model, 128);
         assert_eq!(cfg.model.num_heads, 4);
         assert_eq!(cfg.model.pos_encoding, PosEncoding::Gab);
-        assert!(cfg.model.elo_conditioning);
     }
 
     #[test]

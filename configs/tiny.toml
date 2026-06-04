@@ -8,8 +8,6 @@ layers           = 4      # encoder blocks
 num_heads        = 4      # attention heads (must divide d_model)
 ffn_dim          = 512    # feed-forward hidden width
 head_hidden      = 64     # WDL value-head hidden width
-elo_conditioning = true   # use self/opponent Elo embeddings
-elo_embed_dim    = 128    # strength embedding dim (when elo_conditioning)
 dropout          = 0.1    # attention/FFN dropout (training only; off at inference)
 pos_encoding     = "gab"  # "gab" | "learned_bias" | "none"
 

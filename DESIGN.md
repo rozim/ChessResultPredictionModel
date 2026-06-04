@@ -13,6 +13,14 @@ commands and code map. Design choices are settled in the resolution log in
 - Candle's Metal backend has no fused `layer_norm`/`softmax`/`cross_entropy`
   kernels, so those are reimplemented from primitive ops (still GPU-resident).
   Batch ≥1024 hangs on Metal; the reported run used CPU for responsiveness.
+- **Elo conditioning was removed from the model** (§3.1 below describes the
+  original Maia-style design). The corpus is filtered to a fixed strong-GM Elo
+  band (`--require-elo --min-elo 2400 --max-elo 2899`), so Elo carries no signal;
+  the model input is **board occupancy + aux state only** (`input_dim = 18`).
+  Elo filtering at `prepare` time is retained; Elo is still parsed and stored in
+  shards as metadata, just not fed to the network.
+- Added optional inverse-frequency class weighting (`--draw-weighting`) to
+  counter draw dominance in the elite-GM distribution (§7.2, §8).
 
 ---
 
@@ -52,7 +60,7 @@ the 64 board squares as tokens. The pieces we adopt:
 | Squares-as-tokens encoding   | ✅ Yes | Natural board geometry, few parameters. |
 | Geometric Attention Bias (GAB) | ✅ Yes | The paper's headline contribution; +0.3% on outcome accuracy vs. absolute bias. |
 | Board history (n past states) | ❌ No  | **Dropped by design** — predictions use the current position only (see §3.1). |
-| Elo / skill conditioning     | ✅ Yes | Two soft embeddings (self + opponent rating). |
+| Elo / skill conditioning     | ❌ Removed | Maia design described in §3.1; dropped as built (fixed Elo band → no signal). |
 | **Value (WDL) head**         | ✅ Yes | **Our only output.** |
 | Policy (from-to) head        | ❌ No  | Out of scope (value-only); future work, §3.5. |
 
@@ -206,8 +214,6 @@ layers          = 4           # encoder blocks
 num_heads       = 4           # attention heads (must divide d_model)
 ffn_dim         = 512         # feed-forward hidden width
 head_hidden     = 64          # WDL value-head hidden width
-elo_conditioning = true       # use self/opponent Elo embeddings
-elo_embed_dim   = 128         # strength embedding dim (when elo_conditioning)
 dropout         = 0.1         # attention/FFN dropout (training only)
 pos_encoding    = "gab"       # "gab" | "learned_bias" | "none"
 
@@ -416,7 +422,7 @@ hyperparameters live there, not on the command line.
 | `--grad-clip <F>` | `1.0` | Global-norm gradient clip. |
 | `--value-loss-weight <F>` | `1.0` | Weight on WDL loss. |
 | `--label-smoothing <F>` | `0.05` | WDL label smoothing. |
-| `--class-weights <w,d,l>` | off | Optional per-class loss weights (draw imbalance). |
+| `--draw-weighting` | off | Balance the loss by inverse class frequency (counters draw dominance). |
 
 **System / bookkeeping**
 | Flag | Default | Meaning |
@@ -459,8 +465,6 @@ hyperparameters live there, not on the command line.
 | `--fen <FEN>` | — | Score one position. |
 | `--pgn <PATH>` | — | Score every position reached in a game (each independently). |
 | `--min-ply <N>` | `0` | With `--pgn`: only score positions at least N plies into the game. |
-| `--self-elo <N>` | `1500` | Side-to-move rating. |
-| `--oppo-elo <N>` | `1500` | Opponent rating. |
 | `--batch` | off | Read FENs from stdin, one per line. |
 | `--json` | off | Machine-readable output. |
 

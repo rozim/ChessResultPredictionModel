@@ -44,6 +44,9 @@ struct Args {
     warmup_steps: usize,
     #[arg(long, default_value_t = 0.05)]
     label_smoothing: f32,
+    /// Balance the loss by inverse class frequency (counters draw dominance).
+    #[arg(long, default_value_t = false)]
+    draw_weighting: bool,
     #[arg(long, default_value_t = 10)]
     early_stop_patience: usize,
     /// Run validation every N optimizer steps.
@@ -117,6 +120,20 @@ fn main() -> Result<()> {
     let feats: Vec<f32> = train.iter().map(|s| s.material_balance()).collect();
     let material = MaterialLogistic::fit(&feats, &train_labels, 300, 0.3);
 
+    // Optional inverse-frequency class weights: w[c] = N / (3 · count[c]).
+    let class_weights = if args.draw_weighting {
+        let mut counts = [0f32; 3];
+        for &y in &train_labels {
+            counts[y as usize] += 1.0;
+        }
+        let n = train_labels.len() as f32;
+        let w: Vec<f32> = counts.iter().map(|&c| n / (3.0 * c.max(1.0))).collect();
+        println!("draw-weighting on: class weights = {w:?}");
+        Some(candle_core::Tensor::from_vec(w, 3, &device)?)
+    } else {
+        None
+    };
+
     let mut opt = AdamW::new(
         varmap.all_vars(),
         ParamsAdamW {
@@ -150,7 +167,12 @@ fn main() -> Result<()> {
             let samples: Vec<Sample> = chunk.iter().map(|&i| train[i].clone()).collect();
             let batch = Batch::from_samples(&samples, &device)?;
             let logits = model.forward(&batch, true)?;
-            let loss = wdl_loss(&logits, &batch.labels, args.label_smoothing)?;
+            let loss = wdl_loss(
+                &logits,
+                &batch.labels,
+                args.label_smoothing,
+                class_weights.as_ref(),
+            )?;
             opt.set_learning_rate(lr_at(step, args.warmup_steps, total_steps, args.lr));
             opt.backward_step(&loss)?;
 
