@@ -162,19 +162,22 @@ policy code, flags, shard fields, or tests.
 ### 3.6 Default size presets
 
 Architecture is **not** set on the command line — it lives in a **TOML config
-file** passed via `--model-config` (see §3.8). Four ready-made configs ship in
+file** passed via `--model-config` (see §3.8). Five ready-made configs ship in
 `configs/`. Numbers are targets (no history dimension — each preset sees a
-single position). **For the TWIC corpus (~150k train positions, §6.1) the
-`tiny` config is the default** — the Maia-scale configs would badly overfit.
+single position). **`nano` is the working default for the TWIC corpus** — in
+practice (see [`REPORT.md`](REPORT.md)) the larger configs overfit this little
+data, and `nano` gave the best held-out result.
 
 | Config (`configs/…`) | d_model | layers | heads | ffn | head_hid | gab (d1/d2/d3) | ≈ params | Use |
 |------------|:------:|:------:|:-----:|:---:|:--------:|:---:|:--------:|-----|
-| `tiny.toml`  | 128 | 4  | 4  | 512  | 64  | avg-pool / 128 / 16 | ~0.8M | **TWIC default** |
+| `nano.toml`  | 64  | 2  | 2  | 256  | 32  | avg-pool / 64 / 8   | **~0.15M** | **TWIC default (best held-out)** |
+| `tiny.toml`  | 128 | 4  | 4  | 512  | 64  | avg-pool / 128 / 16 | ~0.9M | small step up; overfits TWIC |
 | `small.toml` | 256 | 8  | 8  | 1024 | 128 | avg-pool / 256 / 32 | ~5M | larger corpora; M1 dev |
 | `medium.toml`| 384 | 12 | 12 | 1536 | 128 | 8 / 384 / 32 | ~23M | M1 (slower) |
 | `large.toml` | 512 | 16 | 16 | 2048 | 128 | 8 / 512 / 64 | ~79M | only with lots of data |
 
-(`small`/`medium`/`large` mirror Maia-3's released 5M / 23M / 79M family.)
+(`small`/`medium`/`large` mirror Maia-3's released 5M / 23M / 79M family;
+`nano` is below the Maia family, added for this small corpus.)
 
 ### 3.7 Regularization (important at this data scale)
 
@@ -289,7 +292,7 @@ chess-wdl/
 │   ├── eval/      -> chess-wdl-eval
 │   └── predict/   -> chess-wdl-predict
 ├── configs/       # committed model-arch TOML files (§3.8)
-│   ├── tiny.toml  ├── small.toml  ├── medium.toml  └── large.toml
+│   ├── nano.toml  ├── tiny.toml  ├── small.toml  ├── medium.toml  └── large.toml
 └── tests/fixtures/  # tiny committed .pgn + golden encodings
 ```
 
@@ -320,7 +323,7 @@ Three pre-split files means **no in-corpus game split is needed**
   per-class calibration and may apply class weighting / label smoothing.
 - **No `%clk` annotations** → `--drop-time-pressure` is a **no-op** here
   (documented; needs clock comments to do anything).
-- **Small** (~150k train positions) → `tiny` preset + regularization (§3.6–3.7),
+- **Small** (~150k train positions) → `nano` preset + regularization (§3.6–3.7),
   early stopping on the twic211 test set.
 - TWIC PGNs occasionally carry annotation glyphs/comments/variations — the
   parser must **skip recursive variations and NAGs** and tolerate missing Elo
@@ -398,7 +401,7 @@ All binaries share: `--device <metal|cpu>` (default `metal`, auto-fallback to
 hyperparameters live there, not on the command line.
 | Flag | Default | Meaning |
 |------|---------|---------|
-| `--model-config <FILE>` | `configs/tiny.toml` | Model architecture TOML (§3.8). Copied into the checkpoint for reproducibility. |
+| `--model-config <FILE>` | `configs/nano.toml` | Model architecture TOML (§3.8). Copied into the checkpoint for reproducibility. |
 
 **Optimization**
 | Flag | Default | Meaning |
@@ -519,9 +522,10 @@ so most tests target encoding, labeling, shapes, and the data path. Layers:
   through the shard packer reproduces the original planes.
 
 **Integration**
-- **Overfit test (key signal):** train the `tiny` model on a single small batch
-  for a few hundred steps on **CPU**; assert loss → ~0 and predictions match
-  labels. Exercises the whole forward/backward/optimizer path.
+- **Overfit/memorization tests (key signal):** `tests/overfit.rs` trains the
+  `nano` and `tiny` models on a single example and on a 16-sample batch for a
+  few hundred steps on **CPU**; asserts loss → ~0 and predictions match labels.
+  Exercises the whole forward/backward/optimizer path (and validates gradients).
 - **End-to-end:** the committed fixture PGN (a handful of games sliced from
   `twic210`) → `prepare` → `train` (a few steps, CPU) → `eval` → `predict`;
   assert files produced and probabilities are valid (non-negative, sum to 1).
@@ -560,7 +564,7 @@ so most tests target encoding, labeling, shapes, and the data path. Layers:
 - **Metal op coverage / dtype gaps in Candle.** Default to f32; keep a CPU path
   so nothing blocks on Metal. Smoke-test Metal early (milestone 6, not last).
 - **Overfitting (the #1 risk here).** ~150k positions vs. ~0.8M params.
-  Mitigate with the `tiny` preset, dropout, weight decay, label smoothing, and
+  Mitigate with the `nano` preset, dropout, weight decay, label smoothing, and
   early stopping on twic211; report the twic212 gap honestly.
 - **Draw imbalance.** TWIC master games are draw-heavy; monitor per-class
   calibration, use label smoothing and optional `--class-weights`.
@@ -586,7 +590,7 @@ so most tests target encoding, labeling, shapes, and the data path. Layers:
 | 5 | Auxiliary state | **In**, as per-token global features (seq stays 64) *(§3.1)* |
 | 6 | Binaries | **4 separate executables** *(§5, §7)* |
 | 7 | Shard format | **Custom `bin`** (mmap); `safetensors` selectable *(§6.3)* |
-| 8 | Default preset | **`tiny` (~0.8M)** for the small TWIC corpus *(§3.6)* |
+| 8 | Default preset | **`nano` (~0.15M)** for the small TWIC corpus *(§3.6)* |
 | 9 | Board history | **Dropped** — current position only, no past states *(§3.1)* |
 | 10 | Architecture config | **TOML file via `--model-config`** (not CLI flags); 4 presets in `configs/`; copied into the checkpoint *(§3.8)* |
 

@@ -47,11 +47,11 @@ fn distinct_samples(n: usize) -> Vec<Sample> {
     out
 }
 
-/// Train the `nano` model on `samples` until it memorizes them, then assert the
+/// Train `config` on `samples` until it memorizes them, then assert the
 /// (dropout-free) predictions match every label and the loss is ~0.
-fn assert_memorizes(samples: &[Sample], steps: usize, max_loss: f32) {
+fn assert_memorizes(config: &str, samples: &[Sample], steps: usize, lr: f64, max_loss: f32) {
     let device = Device::Cpu;
-    let cfg = ModelConfig::load("configs/nano.toml").expect("load nano config");
+    let cfg = ModelConfig::load(config).unwrap_or_else(|e| panic!("load {config}: {e}"));
 
     let varmap = VarMap::new();
     let model = {
@@ -60,7 +60,7 @@ fn assert_memorizes(samples: &[Sample], steps: usize, max_loss: f32) {
     };
     let mut opt = AdamW::new(
         varmap.all_vars(),
-        ParamsAdamW { lr: 1e-2, ..Default::default() },
+        ParamsAdamW { lr, ..Default::default() },
     )
     .expect("optimizer");
 
@@ -96,13 +96,25 @@ fn assert_memorizes(samples: &[Sample], steps: usize, max_loss: f32) {
 
 #[test]
 fn nano_memorizes_single_example() {
-    let samples = distinct_samples(1);
-    assert_memorizes(&samples, 200, 0.02);
+    assert_memorizes("configs/nano.toml", &distinct_samples(1), 200, 1e-2, 0.02);
 }
 
 #[test]
 fn nano_memorizes_batch_of_16() {
     let samples = distinct_samples(16);
     assert_eq!(samples.len(), 16);
-    assert_memorizes(&samples, 800, 0.10);
+    assert_memorizes("configs/nano.toml", &samples, 800, 1e-2, 0.10);
+}
+
+#[test]
+fn tiny_memorizes_single_example() {
+    assert_memorizes("configs/tiny.toml", &distinct_samples(1), 200, 1e-2, 0.02);
+}
+
+#[test]
+fn tiny_memorizes_batch_of_16() {
+    let samples = distinct_samples(16);
+    assert_eq!(samples.len(), 16);
+    // The deeper 0.93M model needs a gentler LR and more steps than nano.
+    assert_memorizes("configs/tiny.toml", &samples, 1500, 3e-3, 0.10);
 }

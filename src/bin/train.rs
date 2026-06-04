@@ -22,7 +22,7 @@ use chess_wdl::runtime::{predict_logits, save_checkpoint, select_device, wdl_los
 #[command(name = "chess-wdl-train", about = "Train the WDL outcome model")]
 struct Args {
     /// Model architecture TOML.
-    #[arg(long, default_value = "configs/tiny.toml")]
+    #[arg(long, default_value = "configs/nano.toml")]
     model_config: PathBuf,
     /// Directory of training shards.
     #[arg(long)]
