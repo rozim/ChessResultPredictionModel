@@ -175,9 +175,14 @@ findings on this machine:
 - **Batch 1024 on Metal hangs at step 0** (batch ≤512 is fine) — an unresolved
   Candle/Metal issue at larger batch. Investigate before relying on big batches.
 - For a model this small, **per-step Metal throughput is modest** (kernel-launch
-  overhead dominates) and the GPU load made the system sluggish. The final run
-  used **CPU** (`--device cpu`, ~1 core via Accelerate) — slower per step but
-  responsive. Both paths are supported and produce identical logic.
+  overhead dominates) and the GPU load made the system sluggish. Training runs
+  used **CPU** (`--device cpu`) — slower per step but responsive. Both paths are
+  supported and produce identical logic.
+- **Fused CPU ops (`src/fused.rs`).** softmax and layer-norm are rayon-parallel
+  `CustomOp1`s on CPU (fused forward + correct backward), dispatched per device.
+  Measured **~1.23× faster** tiny CPU step (302s → 246s for 40 steps + a val
+  pass). The win is bounded by Candle's **single-threaded batched matmul**, which
+  remains the dominant cost; further speedup would need a threaded GEMM backend.
 
 ## Reproduce
 

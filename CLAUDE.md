@@ -53,10 +53,16 @@ A checkpoint dir is self-describing (`model.toml` travels with the weights), so
 ## Gotchas (learned the hard way — read before touching the model)
 
 - **Candle 0.10 Metal lacks fused kernels** for `layer_norm`, `softmax`, and
-  `cross_entropy`/`log_softmax`. We reimplement all three from primitive ops
-  (see `Ln`, `softmax_lastdim` in `model.rs`; `wdl_loss` in `runtime.rs`). **Do
-  not** reintroduce `candle_nn::{LayerNorm, ops::softmax_last_dim, loss::cross_entropy}`
-  — they compile but panic at runtime on `--device metal`.
+  `cross_entropy`/`log_softmax`, and its CPU fused ops are inference-only
+  (no backward). So we provide our own: `softmax_lastdim`/`Ln::forward` in
+  `model.rs` **dispatch by device** — on **CPU** they call the fused,
+  rayon-parallel `CustomOp1`s in `src/fused.rs` (multi-threaded forward + correct
+  primitive backward); on **Metal** they use primitive ops. `wdl_loss`
+  (`runtime.rs`) is primitive. **Do not** reintroduce
+  `candle_nn::{LayerNorm, ops::softmax_last_dim, loss::cross_entropy}` — they
+  panic on Metal and aren't differentiable on CPU. If you change `src/fused.rs`,
+  re-run the **memorization tests** (`tests/overfit.rs`) — they're what verifies
+  the hand-written fused backward gradients.
 - **Batch ≥1024 hangs at step 0 on Metal** (≤512 is fine). Unresolved.
 - For these small models, **CPU (`--device cpu`, Accelerate) keeps the system
   responsive**; Metal works but its kernel-launch overhead dominates and can make
