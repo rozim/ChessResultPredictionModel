@@ -5,8 +5,9 @@ win/draw/loss model described in [`DESIGN.md`](DESIGN.md).
 
 **Runs so far:**
 - **Run 1** — baseline: one file (twic210), terminal positions included → **51.8%** acc.
-- **Run 2** — more data (90 files) + decorrelated sampling + ply window → **57.3%** acc. *(current best)*
+- **Run 2** — more data (90 files) + decorrelated sampling + ply window → **57.3%** acc. *(best on the broad-Elo distribution)*
 - **Run 3** — `tiny` (0.93M) on 1/3 the data → **56.4%** acc: matches nano with far less data (capacity is data-efficient), but nano stays the model to ship.
+- **Run 4** — strict Elo filter (both 2400–2899) → harder, 48%-draw distribution: **53.8%** acc, but the model becomes draw-biased (see §Run 4).
 
 ## Run 1 — baseline (twic210 only, terminal positions included)
 
@@ -163,6 +164,51 @@ temperature again slightly over-corrected).
 better held-out metrics at ~6× fewer params and far cheaper training. The
 larger model is promising but needs full-data training (and ideally a faster
 op-fused forward pass) to realize its edge.
+
+## Run 4 — strict Elo filter (elite-GM, draw-heavy)
+
+### Setup
+
+| | |
+|---|---|
+| **Filter** | `--require-elo --min-elo 2400 --max-elo 2899` (both tags present), plus the Run 2 ply window / decorrelation |
+| **Train** | twic210–289 → **187,178** positions (29.3% win / **46.3% draw** / 24.4% loss) |
+| **Val** | twic290–294 → 19,817 |
+| **Held-out eval** | twic295–299 → **14,738** (48% draws) |
+| **Model** | `configs/nano.toml` (0.15M); status logged every 20 steps, val every 100 |
+| **Training** | CPU, batch 512, lr 4e-4, early-stopped at step 2,400 (best step 1,900); best val 0.9977, T=1.157 |
+
+### Held-out results (twic295–299, 14,738 positions, 48% draws)
+
+| Metric | **Model** (T=1) | Material | Base-rate ("always draw") |
+|---|---|---|---|
+| **Accuracy** | **53.8%** | 47.9% | 47.7% |
+| **Log-loss** ↓ | **0.957** | 1.046 | 1.054 |
+| **Brier** ↓ | **0.575** | 0.630 | 0.635 |
+| **ECE** ↓ (T=1) | **1.1%** | — | — |
+
+Per-class recall: **draw 79%**, loss 35%, **win 27%**.
+
+```
+          win   draw   loss
+win      1134   2589    432
+draw      650   5550    828
+loss      325   1984   1246
+```
+
+### Interpretation (Run 4) — the elite filter makes it harder
+
+- **Still beats every baseline** (+6 pts acc, lower log-loss/Brier) and is
+  **intrinsically well-calibrated** (ECE 1.1% at T=1; the fitted T=1.157
+  over-smoothed slightly). So it learns real signal.
+- **But accuracy fell vs. Run 2 (53.8% vs 57.3%)** and the model is now
+  **draw-biased**: it predicts draw for ~69% of positions (draw recall 79%, but
+  win recall 27%, loss recall 35%). Rational — ~48% of elite games are drawn and
+  the eventual decisive result is hard to read from a single quiet position, so
+  "draw" is the safe bet.
+- Motivates two follow-ups: optional **draw/class weighting** to rebalance
+  win/loss recall, and **removing Elo as an input** (the band is now fixed to
+  strong GMs, so the Elo embedding carries no signal — simplify the model).
 
 ## Notes on the M1 GPU path
 
