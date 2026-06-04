@@ -7,6 +7,7 @@
 pub mod config;
 pub mod data;
 pub mod encoding;
+pub mod fused;
 pub mod metrics;
 pub mod model;
 pub mod runtime;

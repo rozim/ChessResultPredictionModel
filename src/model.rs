@@ -10,8 +10,12 @@ use candle_nn::{linear, Dropout, Init, Linear, Module, VarBuilder};
 use crate::config::{ModelConfig, PosEncoding};
 use crate::encoding::{Sample, AUX_DIM, N_PIECE_PLANES, N_SQUARES};
 
-/// Numerically-stable softmax over the last dim from primitive ops (Metal-safe).
+/// Softmax over the last dim. On CPU it uses the fused, rayon-parallel op
+/// (`crate::fused`); on Metal it falls back to primitive ops (Metal-safe).
 fn softmax_lastdim(x: &Tensor) -> Result<Tensor> {
+    if matches!(x.device(), Device::Cpu) {
+        return crate::fused::softmax_lastdim_cpu(x);
+    }
     let max = x.max_keepdim(D::Minus1)?;
     let e = x.broadcast_sub(&max)?.exp()?;
     let sum = e.sum_keepdim(D::Minus1)?;
@@ -40,11 +44,15 @@ impl Ln {
     }
 
     fn forward(&self, x: &Tensor) -> Result<Tensor> {
-        let mean = x.mean_keepdim(D::Minus1)?;
-        let xc = x.broadcast_sub(&mean)?;
-        let var = xc.sqr()?.mean_keepdim(D::Minus1)?;
-        let denom = (var + self.eps)?.sqrt()?;
-        let xn = xc.broadcast_div(&denom)?;
+        // Standardize (mean/var normalize) over the last dim, then affine.
+        let xn = if matches!(x.device(), Device::Cpu) {
+            crate::fused::layernorm_standardize_cpu(x, self.eps as f32)?
+        } else {
+            let mean = x.mean_keepdim(D::Minus1)?;
+            let xc = x.broadcast_sub(&mean)?;
+            let var = xc.sqr()?.mean_keepdim(D::Minus1)?;
+            xc.broadcast_div(&(var + self.eps)?.sqrt()?)?
+        };
         xn.broadcast_mul(&self.weight)?.broadcast_add(&self.bias)
     }
 }
