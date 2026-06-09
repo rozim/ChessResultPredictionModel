@@ -9,6 +9,7 @@ win/draw/loss model described in [`DESIGN.md`](DESIGN.md).
 - **Run 3** — `tiny` (0.93M) on 1/3 the data → **56.4%** acc: matches nano with far less data (capacity is data-efficient), but nano stays the model to ship.
 - **Run 4** — strict Elo filter (both 2400–2899) → harder, 48%-draw distribution: **53.8%** acc, but the model becomes draw-biased (see §Run 4).
 - **Run 5** — Elo removed from the model (board-only input). 5a: **51.9%** acc (Elo removal costs ~2 pts — the within-band rating *difference* did carry signal). 5b: + `--draw-weighting` rebalances recall (loss 23→31%) at a small accuracy/calibration cost (see §Run 5).
+- **Run 6** — bigger model (`tiny`, Elo-free) on full broad-Elo data, 3-epoch cap → **48.7%** acc: *under-converged* (still improving at the cap), so worse than nano. Confirms tiny needs far more training than a CPU budget allows (see §Run 6).
 
 ## Run 1 — baseline (twic210 only, terminal positions included)
 
@@ -244,6 +245,32 @@ embedding). 5a is the Elo-free baseline; 5b adds `--draw-weighting`
   accuracy or calibrated probabilities; leave it off (default) otherwise.
 - **Best model overall remains Run 2** (broad-Elo data, 57.3% acc). On the
   elite-GM distribution the task is simply harder and draw-dominated.
+
+## Run 6 — bigger model (`tiny`) on broad-Elo, Elo-free
+
+Does more capacity beat nano on the balanced broad-Elo data (Run 2's 57.3%)
+when given the *full* 781k set (Run 3's caveat was it saw only ⅓)? `tiny`
+(0.90M, Elo-free), CPU, `nice -n 19`, 3-epoch cap.
+
+| Held-out broad-Elo (80,171) | nano Run 2 (Elo, converged) | tiny Run 3 (Elo, ⅓ data) | **tiny Run 6 (Elo-free, 3 ep)** | base-rate |
+|---|---|---|---|---|
+| Accuracy | **57.3%** | 56.4% | 48.7% | 37.4% |
+| Log-loss ↓ | **0.924** | 0.935 | 1.008 | 1.095 |
+| ECE ↓ | 2.0% | — | 1.7% | — |
+
+### Interpretation (Run 6) — under-converged, not "bigger is worse"
+
+`tiny` scored **48.7% / 1.008** — well below nano — but **it never converged**:
+validation was *still falling steeply* at the 3-epoch cap (1.012 → 1.006 → 1.004,
+no plateau, no early stop). The deeper 4-layer model optimizes far slower than
+nano's 2 layers, and ~4,600 steps is nowhere near enough. Two confounds stack:
+under-training (dominant) and Elo removal (~2 pts, Run 5).
+
+**Practical takeaway, consistent across all runs:** under a CPU compute budget,
+the small/shallow **`nano` is the model to ship**. Extra capacity only pays off
+if you can afford to converge it (~2 hr/epoch here → many hours), which on this
+hardware you generally can't. *(A longer, converged `tiny` run is queued to test
+the fair-fight version of this question.)*
 
 ## Notes on the M1 GPU path
 
