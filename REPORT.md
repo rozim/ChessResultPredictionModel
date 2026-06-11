@@ -10,6 +10,7 @@ win/draw/loss model described in [`DESIGN.md`](DESIGN.md).
 - **Run 4** — strict Elo filter (both 2400–2899) → harder, 48%-draw distribution: **53.8%** acc, but the model becomes draw-biased (see §Run 4).
 - **Run 5** — Elo removed from the model (board-only input). 5a: **51.9%** acc (Elo removal costs ~2 pts — the within-band rating *difference* did carry signal). 5b: + `--draw-weighting` rebalances recall (loss 23→31%) at a small accuracy/calibration cost (see §Run 5).
 - **Run 6** — bigger model (`tiny`, Elo-free) on full broad-Elo data, 3-epoch cap → **48.7%** acc: *under-converged* (still improving at the cap), so worse than nano. Confirms tiny needs far more training than a CPU budget allows (see §Run 6).
+- **Run 7** — same `tiny`, trained to convergence (~12 epochs, ~36 h) → **51.3%** acc: recovers the under-convergence loss but still **doesn't beat nano** at ~36× the cost. Settles it: bigger model is not worth it here (see §Run 7).
 
 ## Run 1 — baseline (twic210 only, terminal positions included)
 
@@ -271,6 +272,39 @@ the small/shallow **`nano` is the model to ship**. Extra capacity only pays off
 if you can afford to converge it (~2 hr/epoch here → many hours), which on this
 hardware you generally can't. *(A longer, converged `tiny` run is queued to test
 the fair-fight version of this question.)*
+
+## Run 7 — `tiny` trained to convergence (the fair fight)
+
+Run 6 left `tiny` under-trained, so this run extends it: same `tiny` (0.90M,
+Elo-free) on the full 781k broad-Elo set, 15-epoch cap, CPU, `nice -n 19`.
+It **early-stopped at ~epoch 13** (step 19,000, best val **0.9748**) after
+**~36 hours** of wall-clock.
+
+### Held-out broad-Elo (80,171)
+
+| Metric | nano Run 2 (Elo, ~2 h) | tiny Run 6 (3 ep) | **tiny Run 7 (converged)** | base-rate |
+|---|---|---|---|---|
+| **Accuracy** | **57.3%** | 48.7% | 51.3% | 37.4% |
+| **Log-loss** ↓ | **0.924** | 1.008 | 0.978 | 1.095 |
+| **Brier** ↓ | **0.548** | 0.605 | 0.585 | 0.664 |
+| **ECE** ↓ | 2.0% | 1.7% | 1.5% | — |
+| **Recall** w/d/l | 68/35/66 | — | 53/54/47 | — |
+
+### Interpretation (Run 7) — bigger is *not* worth it here
+
+- **Convergence recovered most of Run 6's deficit** (48.7 → 51.3% acc,
+  1.008 → 0.978 log-loss) — confirming under-training, not capacity, drove the
+  bad Run 6 number.
+- **But converged `tiny` still loses to `nano`** (51.3% vs 57.3% acc). The ~6-pt
+  gap is larger than the ~2-pt Elo handicap (Run 5) can explain, so it isn't just
+  the removed Elo: the extra capacity simply doesn't help on this data/task.
+- `tiny` does have a **more balanced error profile** (recall 53/54/47 vs nano's
+  decisive 68/35/66) — it spreads its bets — but that doesn't translate to higher
+  accuracy or lower log-loss.
+- **Cost:** ~36 h vs nano's ~2 h — roughly **18× the wall-clock for a worse
+  model**. Decisive confirmation of the running theme: on this corpus and
+  hardware, the small/shallow **`nano` is the model to ship**; scaling up the
+  transformer buys nothing here.
 
 ## Notes on the M1 GPU path
 
