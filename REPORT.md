@@ -11,6 +11,7 @@ win/draw/loss model described in [`DESIGN.md`](DESIGN.md).
 - **Run 5** — Elo removed from the model (board-only input). 5a: **51.9%** acc (Elo removal costs ~2 pts — the within-band rating *difference* did carry signal). 5b: + `--draw-weighting` rebalances recall (loss 23→31%) at a small accuracy/calibration cost (see §Run 5).
 - **Run 6** — bigger model (`tiny`, Elo-free) on full broad-Elo data, 3-epoch cap → **48.7%** acc: *under-converged* (still improving at the cap), so worse than nano. Confirms tiny needs far more training than a CPU budget allows (see §Run 6).
 - **Run 7** — same `tiny`, trained to convergence (~12 epochs, ~36 h) → **51.3%** acc: recovers the under-convergence loss but still **doesn't beat nano** at ~36× the cost. Settles it: bigger model is not worth it here (see §Run 7).
+- **Run 8** — memorization split: flag eval/test positions that also occur in train (14.9% / 13.5% overlap) → **seen 32.9%** vs **unseen 44.0%** acc. Counterintuitively, seen positions are *harder*: the shared ones are mostly low-signal, inconsistently-labelled openings, so on a single-issue train set the split tracks game *phase*, not memorization (see §Run 8).
 
 ## Run 1 — baseline (twic210 only, terminal positions included)
 
@@ -306,6 +307,54 @@ It **early-stopped at ~epoch 13** (step 19,000, best val **0.9748**) after
   hardware, the small/shallow **`nano` is the model to ship**; scaling up the
   transformer buys nothing here.
 
+## Run 8 — memorization split (seen vs. novel positions)
+
+New capability: every test/eval position is stamped with a `seen` flag — true if
+the exact position (board + castling + en-passant, side-to-move frame; Elo and
+label ignored) also appears in the training set. `chess-wdl-prepare
+--seen-against <train-dir>` computes it from a position fingerprint, and
+`chess-wdl-eval` then breaks all metrics down by seen vs. unseen, so we can ask
+whether the model is *memorizing* training positions or generalizing.
+
+### Setup
+
+| | |
+|---|---|
+| **Train** | `twic210.pgn` → **143,432** positions (Run-1-style data: no ply window, terminals included) |
+| **Test / early-stop** | `twic211.pgn` → 82,427 positions — **12,298 (14.9%) seen in train** |
+| **Held-out eval** | `twic212.pgn` → 81,528 positions — **10,990 (13.5%) seen in train** |
+| **Model** | `configs/nano.toml` (0.15M, board-only / Elo-free per Run 5) |
+| **Training** | CPU, `nice -n 19`, batch 512, lr 3e-4; early-stopped step 3,200 (best ~1,200), best val **1.0792**, T=**1.335** |
+
+### Held-out results (twic212, 81,528 positions)
+
+| Subset | n | Accuracy | Log-loss ↓ | Brier ↓ | ECE ↓ |
+|---|---|---|---|---|---|
+| **all** | 81,528 | 42.5% | 1.059 | 0.639 | 2.0% |
+| **seen** in train | 10,990 | **32.9%** | 1.101 | 0.668 | 1.8% |
+| **unseen** (novel) | 70,538 | **44.0%** | 1.053 | 0.635 | 2.4% |
+| baseline: material | 81,528 | 42.9% | 1.066 | 0.641 | — |
+| baseline: base-rate | 81,528 | 34.9% | 1.098 | 0.666 | — |
+
+### Interpretation (Run 8) — the split tracks game phase, not memorization
+
+- **The metric works**, but the result inverts the naive expectation: positions
+  the model *saw in training* score **worse** (32.9% vs 44.0% acc, higher
+  log-loss), i.e. there is **no memorization edge**.
+- **Why:** with a single TWIC issue as the train set, the positions shared with
+  later issues are almost entirely **openings** — inherently low-signal *and*
+  labelled inconsistently across games (the same opening is a win in one game, a
+  loss in another), so there is no single outcome to memorize. "Unseen"
+  positions skew toward mid/endgame where material gives the model something to
+  grip. So here the seen/unseen split is mostly a proxy for **game phase**.
+- The absolute accuracy is below Run 1's 51.8% on the same files because this
+  model is now **board-only/Elo-free** (Run 5); on broad-Elo TWIC data the
+  player rating *difference* carried more signal than in the elite band, so its
+  removal costs more here.
+- **The plumbing scales:** run `scripts/regen-data.sh` against the full TWIC
+  collection and the overlap will involve far more (and deeper) shared
+  positions, sharpening this into a genuine memorization probe.
+
 ## Notes on the M1 GPU path
 
 Training and inference run on Metal (`--device metal`) as required, but Candle
@@ -329,10 +378,16 @@ findings on this machine:
 ## Reproduce
 
 ```bash
-# 1. Prepare shards (already gitignored under data/)
+# 1. Prepare shards (gitignored under data/). Build train first, then stamp
+#    test/eval with the `seen` flag (= position also present in train).
+#    Convenience script does all three from data/pgn/*.pgn:
+./scripts/regen-data.sh                      # -> data/shards/{train,test,eval}
+# ...or by hand:
 ./target/release/chess-wdl-prepare --input data/pgn/twic210.pgn --output data/shards/train
-./target/release/chess-wdl-prepare --input data/pgn/twic211.pgn --output data/shards/test
-./target/release/chess-wdl-prepare --input data/pgn/twic212.pgn --output data/shards/eval
+./target/release/chess-wdl-prepare --input data/pgn/twic211.pgn --output data/shards/test \
+  --seen-against data/shards/train
+./target/release/chess-wdl-prepare --input data/pgn/twic212.pgn --output data/shards/eval \
+  --seen-against data/shards/train
 
 # 2. Train (CPU; swap --device metal to use the M1 GPU)
 ./target/release/chess-wdl-train --model-config configs/nano.toml \
