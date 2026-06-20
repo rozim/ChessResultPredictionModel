@@ -60,6 +60,10 @@ pub struct Sample {
     pub oppo_elo: u16,
     /// WDL class (see `WDL_*`). 255 = unlabeled (inference only).
     pub wdl: u8,
+    /// True if this exact position also appears in the training set. Set during
+    /// `prepare --seen-against`; always `false` for training/inference samples.
+    /// Lets eval split metrics by potential memorization. Not a model input.
+    pub seen: bool,
 }
 
 fn role_index(r: Role) -> usize {
@@ -149,6 +153,20 @@ impl Sample {
         ]
     }
 
+    /// Stable 64-bit fingerprint of the *position* — board occupancy plus
+    /// castling rights and en-passant file, in the side-to-move frame. Excludes
+    /// Elo, the WDL label, and the `seen` flag, so two records of the same chess
+    /// position hash equally regardless of game/rating. Used to detect
+    /// train/test overlap. FNV-1a; collisions at corpus scale are negligible.
+    pub fn position_hash(&self) -> u64 {
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        for &b in self.squares.iter().chain([self.castling, self.ep_file].iter()) {
+            h ^= b as u64;
+            h = h.wrapping_mul(0x100_0000_01b3);
+        }
+        h
+    }
+
     /// Material balance (own minus opponent), classic 1/3/3/5/9 weights.
     /// Positive favors the side to move. Used by the material-logistic baseline.
     pub fn material_balance(&self) -> f32 {
@@ -215,6 +233,7 @@ mod tests {
             self_elo: 1500,
             oppo_elo: 1500,
             wdl: 255,
+            seen: false,
         };
         let planes = s.planes_f32();
         assert_eq!(planes.len(), N_PIECE_PLANES * N_SQUARES);
@@ -234,6 +253,7 @@ mod tests {
             self_elo: 1500,
             oppo_elo: 1500,
             wdl: 255,
+            seen: false,
         };
         assert!((s.material_balance()).abs() < 1e-6);
     }
@@ -245,6 +265,34 @@ mod tests {
         assert_eq!(wdl_label(Color::Black, GameResult::BlackWin), WDL_WIN);
         assert_eq!(wdl_label(Color::White, GameResult::Draw), WDL_DRAW);
         assert_eq!(wdl_label(Color::Black, GameResult::Draw), WDL_DRAW);
+    }
+
+    #[test]
+    fn position_hash_ignores_elo_label_and_seen() {
+        let pos = Chess::default();
+        let (squares, castling, ep_file) = encode_position(&pos);
+        let a = Sample {
+            squares,
+            castling,
+            ep_file,
+            self_elo: 2500,
+            oppo_elo: 2400,
+            wdl: WDL_WIN,
+            seen: false,
+        };
+        let b = Sample {
+            self_elo: 1200,
+            oppo_elo: 1800,
+            wdl: WDL_LOSS,
+            seen: true,
+            ..a.clone()
+        };
+        // Same board/castling/ep -> same fingerprint despite differing meta.
+        assert_eq!(a.position_hash(), b.position_hash());
+        // A different position hashes differently.
+        let mut c = a.clone();
+        c.squares[0] = 0; // remove the a1 rook
+        assert_ne!(a.position_hash(), c.position_hash());
     }
 
     #[test]

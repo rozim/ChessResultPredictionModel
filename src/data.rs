@@ -4,6 +4,7 @@
 //! one [`Sample`] per position (current position only — no history). Samples are
 //! written to a compact fixed-record binary shard that loads via a single read.
 
+use std::collections::HashSet;
 use std::io::{BufWriter, Read, Write};
 use std::ops::ControlFlow;
 use std::path::Path;
@@ -149,6 +150,7 @@ impl SampleCollector {
                 self_elo,
                 oppo_elo,
                 wdl: wdl_label(turn, result),
+                seen: false,
             });
         }
         self.stats.games_kept += 1;
@@ -247,14 +249,17 @@ pub fn prepare_pgn(
 }
 
 // ---------------------------------------------------------------------------
-// Shard format: header + fixed 71-byte records.
+// Shard format: header + fixed-size records.
 //   magic "CWDL"(4) | version u32 | count u64    (16-byte header)
-//   record: squares[64] castling[1] ep_file[1] self_elo[2] oppo_elo[2] wdl[1]
+//   v1 record (71B): squares[64] castling[1] ep_file[1] self_elo[2] oppo_elo[2] wdl[1]
+//   v2 record (72B): ... wdl[1] seen[1]   (seen = 1 if also in the training set)
+// v1 shards still load (seen defaults to false).
 // ---------------------------------------------------------------------------
 
 const MAGIC: &[u8; 4] = b"CWDL";
-const VERSION: u32 = 1;
-const RECORD_LEN: usize = N_SQUARES + 1 + 1 + 2 + 2 + 1; // 71
+const VERSION: u32 = 2;
+const RECORD_LEN_V1: usize = N_SQUARES + 1 + 1 + 2 + 2 + 1; // 71
+const RECORD_LEN: usize = RECORD_LEN_V1 + 1; // 72 (v2: + seen byte)
 
 pub fn write_shard(path: impl AsRef<Path>, samples: &[Sample]) -> Result<()> {
     let file = std::fs::File::create(path.as_ref())
@@ -271,6 +276,7 @@ pub fn write_shard(path: impl AsRef<Path>, samples: &[Sample]) -> Result<()> {
         rec[N_SQUARES + 2..N_SQUARES + 4].copy_from_slice(&s.self_elo.to_le_bytes());
         rec[N_SQUARES + 4..N_SQUARES + 6].copy_from_slice(&s.oppo_elo.to_le_bytes());
         rec[N_SQUARES + 6] = s.wdl;
+        rec[N_SQUARES + 7] = s.seen as u8;
         w.write_all(&rec)?;
     }
     w.flush()?;
@@ -286,21 +292,19 @@ pub fn read_shard(path: impl AsRef<Path>) -> Result<Vec<Sample>> {
         bail!("bad shard magic in {:?}", path.as_ref());
     }
     let version = u32::from_le_bytes(header[4..8].try_into().unwrap());
-    if version != VERSION {
-        bail!("unsupported shard version {version}");
-    }
+    let rec_len = match version {
+        1 => RECORD_LEN_V1,
+        2 => RECORD_LEN,
+        v => bail!("unsupported shard version {v}"),
+    };
     let count = u64::from_le_bytes(header[8..16].try_into().unwrap()) as usize;
     let mut buf = Vec::new();
     f.read_to_end(&mut buf)?;
-    if buf.len() != count * RECORD_LEN {
-        bail!(
-            "shard body size mismatch: {} != {}",
-            buf.len(),
-            count * RECORD_LEN
-        );
+    if buf.len() != count * rec_len {
+        bail!("shard body size mismatch: {} != {}", buf.len(), count * rec_len);
     }
     let mut out = Vec::with_capacity(count);
-    for rec in buf.chunks_exact(RECORD_LEN) {
+    for rec in buf.chunks_exact(rec_len) {
         let mut squares = [0u8; N_SQUARES];
         squares.copy_from_slice(&rec[..N_SQUARES]);
         out.push(Sample {
@@ -310,6 +314,8 @@ pub fn read_shard(path: impl AsRef<Path>) -> Result<Vec<Sample>> {
             self_elo: u16::from_le_bytes(rec[N_SQUARES + 2..N_SQUARES + 4].try_into().unwrap()),
             oppo_elo: u16::from_le_bytes(rec[N_SQUARES + 4..N_SQUARES + 6].try_into().unwrap()),
             wdl: rec[N_SQUARES + 6],
+            // v1 shards have no seen byte.
+            seen: version >= 2 && rec[N_SQUARES + 7] != 0,
         });
     }
     Ok(out)
@@ -330,6 +336,25 @@ pub fn read_shard_dir(dir: impl AsRef<Path>) -> Result<Vec<Sample>> {
     Ok(all)
 }
 
+/// Build the set of position fingerprints (see [`Sample::position_hash`]) for
+/// every sample in a shard directory — i.e. the training positions to test
+/// held-out samples against.
+pub fn load_position_hashes(dir: impl AsRef<Path>) -> Result<HashSet<u64>> {
+    let samples = read_shard_dir(dir)?;
+    Ok(samples.iter().map(Sample::position_hash).collect())
+}
+
+/// Mark each sample's `seen` flag according to membership in `train_hashes`,
+/// returning the number marked seen.
+pub fn mark_seen(samples: &mut [Sample], train_hashes: &HashSet<u64>) -> usize {
+    let mut n = 0;
+    for s in samples.iter_mut() {
+        s.seen = train_hashes.contains(&s.position_hash());
+        n += s.seen as usize;
+    }
+    n
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -344,6 +369,7 @@ mod tests {
             self_elo: 2500,
             oppo_elo: 2400,
             wdl,
+            seen: false,
         }
     }
 
@@ -356,6 +382,47 @@ mod tests {
         write_shard(&path, &samples).unwrap();
         let back = read_shard(&path).unwrap();
         assert_eq!(samples, back);
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn seen_flag_roundtrips_and_marking() {
+        // Two distinct positions: startpos and after 1. e4.
+        let start = sample(0);
+        let after_e4 = {
+            let m = shakmaty::san::San::from_ascii(b"e4")
+                .unwrap()
+                .to_move(&Chess::default())
+                .unwrap();
+            let pos = Chess::default().play(m).unwrap();
+            let (squares, castling, ep_file) = encode_position(&pos);
+            Sample {
+                squares,
+                castling,
+                ep_file,
+                self_elo: 2500,
+                oppo_elo: 2400,
+                wdl: 1,
+                seen: false,
+            }
+        };
+
+        // "Training" set contains only the start position.
+        let train_hashes: HashSet<u64> = [start.position_hash()].into_iter().collect();
+        let mut held_out = vec![start.clone(), after_e4];
+        let n_seen = mark_seen(&mut held_out, &train_hashes);
+        assert_eq!(n_seen, 1);
+        assert!(held_out[0].seen);
+        assert!(!held_out[1].seen);
+
+        // The seen flag survives a shard write/read (v2 format).
+        let dir = std::env::temp_dir().join(format!("cwdl-seen-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("s.bin");
+        write_shard(&path, &held_out).unwrap();
+        let back = read_shard(&path).unwrap();
+        assert_eq!(back, held_out);
+        assert!(back[0].seen && !back[1].seen);
         std::fs::remove_file(&path).ok();
     }
 

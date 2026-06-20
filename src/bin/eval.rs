@@ -77,6 +77,27 @@ fn main() -> Result<()> {
     let probs_raw = metrics::apply_temperature(&logits, 1.0);
     print_metrics("model (T=1)", &metrics::evaluate(&probs_raw, &labels));
 
+    // Memorization split: how does the model do on positions it saw in training
+    // vs. genuinely novel ones? Uses the `seen` flag stamped by
+    // `prepare --seen-against`. Skipped if the eval set carries no seen flags.
+    let seen_idx: Vec<usize> = (0..samples.len()).filter(|&i| samples[i].seen).collect();
+    let unseen_idx: Vec<usize> = (0..samples.len()).filter(|&i| !samples[i].seen).collect();
+    let eval_subset = |idxs: &[usize]| {
+        let p: Vec<[f32; 3]> = idxs.iter().map(|&i| probs[i]).collect();
+        let l: Vec<u8> = idxs.iter().map(|&i| labels[i]).collect();
+        metrics::evaluate(&p, &l)
+    };
+    if !seen_idx.is_empty() {
+        println!(
+            "\nmemorization split (calibrated): {}/{} seen in training ({:.1}%)",
+            seen_idx.len(),
+            samples.len(),
+            100.0 * seen_idx.len() as f32 / samples.len() as f32
+        );
+        print_metrics("  seen (memorized?)", &eval_subset(&seen_idx));
+        print_metrics("  unseen (novel)", &eval_subset(&unseen_idx));
+    }
+
     if args.baseline {
         println!();
         let base = vec![meta.base_rate; samples.len()];

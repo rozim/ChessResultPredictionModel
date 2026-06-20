@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 use clap::Parser;
 
-use chess_wdl::data::{prepare_pgn, write_shard, PrepareFilter};
+use chess_wdl::data::{load_position_hashes, mark_seen, prepare_pgn, write_shard, PrepareFilter};
 
 #[derive(Parser, Debug)]
 #[command(name = "chess-wdl-prepare", about = "PGN -> WDL training shards")]
@@ -43,6 +43,11 @@ struct Args {
     /// Positions per shard file.
     #[arg(long, default_value_t = 1_000_000)]
     shard_size: usize,
+    /// Mark each output position with whether it also appears in this training
+    /// shard directory (sets the `seen` flag for memorization-split metrics).
+    /// Use when preparing test/eval sets against the already-built train set.
+    #[arg(long)]
+    seen_against: Option<PathBuf>,
 }
 
 fn main() -> Result<()> {
@@ -74,6 +79,20 @@ fn main() -> Result<()> {
             samples.len()
         );
         all.extend(samples);
+    }
+
+    // Mark positions that also occur in the training set (memorization split).
+    if let Some(train_dir) = &args.seen_against {
+        println!("loading training positions from {:?} ...", train_dir);
+        let train_hashes = load_position_hashes(train_dir)?;
+        let n_seen = mark_seen(&mut all, &train_hashes);
+        let n = all.len().max(1);
+        println!(
+            "seen-in-training: {n_seen}/{} positions ({:.1}%) | {} unique train positions",
+            all.len(),
+            100.0 * n_seen as f32 / n as f32,
+            train_hashes.len()
+        );
     }
 
     // Class distribution (sanity / draw-rate check).

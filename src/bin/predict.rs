@@ -48,6 +48,7 @@ fn sample_from_fen(fen: &str) -> Result<Sample> {
         self_elo: 0,
         oppo_elo: 0,
         wdl: 255,
+        seen: false,
     })
 }
 
