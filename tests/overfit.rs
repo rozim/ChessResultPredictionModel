@@ -42,6 +42,7 @@ fn distinct_samples(n: usize) -> Vec<Sample> {
             self_elo: 2400,
             oppo_elo: 2400,
             wdl: (i % 3) as u8,
+            ply: 0,
             seen: false,
         });
     }

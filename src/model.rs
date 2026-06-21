@@ -353,6 +353,7 @@ mod tests {
                 self_elo: 2500,
                 oppo_elo: 2400,
                 wdl: (i % 3) as u8,
+                ply: 0,
                 seen: false,
             })
             .collect();

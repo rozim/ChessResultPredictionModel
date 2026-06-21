@@ -12,6 +12,7 @@ win/draw/loss model described in [`DESIGN.md`](DESIGN.md).
 - **Run 6** — bigger model (`tiny`, Elo-free) on full broad-Elo data, 3-epoch cap → **48.7%** acc: *under-converged* (still improving at the cap), so worse than nano. Confirms tiny needs far more training than a CPU budget allows (see §Run 6).
 - **Run 7** — same `tiny`, trained to convergence (~12 epochs, ~36 h) → **51.3%** acc: recovers the under-convergence loss but still **doesn't beat nano** at ~36× the cost. Settles it: bigger model is not worth it here (see §Run 7).
 - **Run 8** — memorization split: flag eval/test positions that also occur in train (14.9% / 13.5% overlap) → **seen 32.9%** vs **unseen 44.0%** acc. Counterintuitively, seen positions are *harder*: the shared ones are mostly low-signal, inconsistently-labelled openings, so on a single-issue train set the split tracks game *phase*, not memorization (see §Run 8).
+- **Run 9** — scale-up + ply bands: **22.6M** train positions (twic900–999), nano capped at 13k steps (~0.3 epoch, ~3.8 h) → **48.5%** acc / 0.988 log-loss. New per-ply-band metrics show accuracy climbing **37% (openings) → ~66% (deep middlegame)**, which *explains* the Run-8 inversion: "seen" ≈ early-ply ≈ intrinsically hard, not memorized (see §Run 9).
 
 ## Run 1 — baseline (twic210 only, terminal positions included)
 
@@ -354,6 +355,75 @@ whether the model is *memorizing* training positions or generalizing.
 - **The plumbing scales:** run `scripts/regen-data.sh` against the full TWIC
   collection and the overlap will involve far more (and deeper) shared
   positions, sharpening this into a genuine memorization probe.
+
+## Run 9 — scale-up (22.6M positions) + per-ply-band metrics
+
+Two additions: (1) every position now stores its **ply** (half-move index in the
+game), and `chess-wdl-eval` breaks metrics into **ply bands of 20**; (2) a much
+larger corpus — TWIC issues **twic900–999** (100 files, 226 MB PGN) — to give the
+memorization probe (Run 8) real shared-position depth.
+
+### Setup
+
+| | |
+|---|---|
+| **Train** | twic900–997 (98 files) → **22,608,380** positions (35.1% win / 29.4% draw / 35.4% loss); 16.9M unique |
+| **Test / early-stop** | twic998 → 198,278 — **31.9%** also in train |
+| **Held-out eval** | twic999 → 317,331 — **23.6%** also in train |
+| **Model** | `configs/nano.toml` (0.15M, board-only / Elo-free) |
+| **Training** | CPU, `nice -n 19`, batch 512, **`--max-steps 13000`** (~0.3 of one 44k-step epoch — deliberately capped for a <6 h budget at ~1.1 s/step), val every 500. **~3 h 48 m**; best val **0.9767**, T=**0.860** |
+
+Reproduce the data with `./scripts/regen-data.sh /path/to/Twic data/shards 'twic9??.pgn'`
+(builds train first, then stamps test/eval `--seen-against` it).
+
+### Held-out results (twic999, 317,331 positions)
+
+| Metric | **Model** (cal.) | Material | Base-rate |
+|---|---|---|---|
+| **Accuracy** | **48.5%** | 44.7% | 36.5% |
+| **Log-loss** ↓ | **0.988** | 1.055 | 1.091 |
+| **Brier** ↓ | **0.594** | 0.632 | 0.662 |
+| **ECE** ↓ | **1.0%** | 4.9% | 1.0% |
+
+**Memorization split:**
+
+| Subset | n | Accuracy | Log-loss | ECE |
+|---|---|---|---|---|
+| **seen** in train (23.6%) | 75,015 | **37.0%** | 1.089 | 0.4% |
+| **unseen** (novel) | 242,316 | **52.1%** | 0.957 | 1.4% |
+
+**Ply bands (game phase):**
+
+| Ply band | n | Accuracy | Log-loss |
+|---|---|---|---|
+| 0–19 | 76,234 | 36.8% | 1.090 |
+| 20–39 | 74,268 | 41.1% | 1.076 |
+| 40–59 | 65,634 | 50.8% | 0.995 |
+| 60–79 | 47,485 | 58.5% | 0.895 |
+| 80–99 | 27,589 | 62.3% | 0.822 |
+| 100–119 | 14,449 | 65.6% | 0.770 |
+| 120–139 | 6,654 | 66.4% | 0.755 |
+| 140–159 | 3,030 | 63.0% | 0.794 |
+| 160+ | 1,988 | ~63% | ~0.72 |
+
+### Interpretation (Run 9)
+
+- **Scale helps a lot.** Same 0.15M model, board-only: 42.5% (single issue, Run 8)
+  → **48.5%** on the 22.6M-position corpus, with strong calibration (ECE 1.0%,
+  T=0.86). And this is only ~0.3 of one epoch — the curve was still gently
+  improving at the 13k-step cap, so more compute would buy more.
+- **The ply bands explain Run 8's "memorization inversion."** Accuracy rises
+  almost monotonically with game phase: **openings (ply 0–19) sit at base-rate
+  (~37%, log-loss ~1.09)** — the result is genuinely unreadable that early — while
+  deep middlegames (ply 100–139) reach **~66%**. Because the positions shared
+  between TWIC issues are overwhelmingly **openings**, "seen" ≈ low-ply ≈
+  intrinsically hard. So the seen-vs-unseen gap (37% vs 52%) is a **game-phase
+  artifact, not memorization** — exactly what the per-ply view makes visible.
+- Practical reading: the model has essentially **no opening signal** (as expected
+  from a single position with no move history) and most of its skill is reading
+  **resolved, material/king-safety-laden later positions**. A ply window
+  (`--min-ply`) would raise headline accuracy by simply dropping the hard early
+  band, as Run 2 did.
 
 ## Notes on the M1 GPU path
 

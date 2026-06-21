@@ -137,7 +137,7 @@ impl SampleCollector {
         }
 
         for i in idxs {
-            let (squares, castling, ep_file, turn, _ply) = mt.raw[i];
+            let (squares, castling, ep_file, turn, ply) = mt.raw[i];
             let (self_elo, oppo_elo) = if turn == Color::White {
                 (we, be)
             } else {
@@ -150,6 +150,7 @@ impl SampleCollector {
                 self_elo,
                 oppo_elo,
                 wdl: wdl_label(turn, result),
+                ply: ply.min(u16::MAX as u32) as u16,
                 seen: false,
             });
         }
@@ -252,14 +253,16 @@ pub fn prepare_pgn(
 // Shard format: header + fixed-size records.
 //   magic "CWDL"(4) | version u32 | count u64    (16-byte header)
 //   v1 record (71B): squares[64] castling[1] ep_file[1] self_elo[2] oppo_elo[2] wdl[1]
-//   v2 record (72B): ... wdl[1] seen[1]   (seen = 1 if also in the training set)
-// v1 shards still load (seen defaults to false).
+//   v2 record (72B): ... wdl[1] seen[1]            (seen = 1 if also in train)
+//   v3 record (74B): ... wdl[1] seen[1] ply[2-le]  (half-move index in the game)
+// Older shards still load (missing fields default to false / 0).
 // ---------------------------------------------------------------------------
 
 const MAGIC: &[u8; 4] = b"CWDL";
-const VERSION: u32 = 2;
+const VERSION: u32 = 3;
 const RECORD_LEN_V1: usize = N_SQUARES + 1 + 1 + 2 + 2 + 1; // 71
-const RECORD_LEN: usize = RECORD_LEN_V1 + 1; // 72 (v2: + seen byte)
+const RECORD_LEN_V2: usize = RECORD_LEN_V1 + 1; // 72 (+ seen byte)
+const RECORD_LEN: usize = RECORD_LEN_V2 + 2; // 74 (v3: + ply u16)
 
 pub fn write_shard(path: impl AsRef<Path>, samples: &[Sample]) -> Result<()> {
     let file = std::fs::File::create(path.as_ref())
@@ -277,6 +280,7 @@ pub fn write_shard(path: impl AsRef<Path>, samples: &[Sample]) -> Result<()> {
         rec[N_SQUARES + 4..N_SQUARES + 6].copy_from_slice(&s.oppo_elo.to_le_bytes());
         rec[N_SQUARES + 6] = s.wdl;
         rec[N_SQUARES + 7] = s.seen as u8;
+        rec[N_SQUARES + 8..N_SQUARES + 10].copy_from_slice(&s.ply.to_le_bytes());
         w.write_all(&rec)?;
     }
     w.flush()?;
@@ -294,7 +298,8 @@ pub fn read_shard(path: impl AsRef<Path>) -> Result<Vec<Sample>> {
     let version = u32::from_le_bytes(header[4..8].try_into().unwrap());
     let rec_len = match version {
         1 => RECORD_LEN_V1,
-        2 => RECORD_LEN,
+        2 => RECORD_LEN_V2,
+        3 => RECORD_LEN,
         v => bail!("unsupported shard version {v}"),
     };
     let count = u64::from_le_bytes(header[8..16].try_into().unwrap()) as usize;
@@ -314,8 +319,13 @@ pub fn read_shard(path: impl AsRef<Path>) -> Result<Vec<Sample>> {
             self_elo: u16::from_le_bytes(rec[N_SQUARES + 2..N_SQUARES + 4].try_into().unwrap()),
             oppo_elo: u16::from_le_bytes(rec[N_SQUARES + 4..N_SQUARES + 6].try_into().unwrap()),
             wdl: rec[N_SQUARES + 6],
-            // v1 shards have no seen byte.
+            // v1 shards have no seen byte; v1/v2 have no ply.
             seen: version >= 2 && rec[N_SQUARES + 7] != 0,
+            ply: if version >= 3 {
+                u16::from_le_bytes(rec[N_SQUARES + 8..N_SQUARES + 10].try_into().unwrap())
+            } else {
+                0
+            },
         });
     }
     Ok(out)
@@ -369,6 +379,7 @@ mod tests {
             self_elo: 2500,
             oppo_elo: 2400,
             wdl,
+            ply: 0,
             seen: false,
         }
     }
@@ -403,6 +414,7 @@ mod tests {
                 self_elo: 2500,
                 oppo_elo: 2400,
                 wdl: 1,
+                ply: 0,
                 seen: false,
             }
         };
@@ -438,6 +450,10 @@ mod tests {
         assert_eq!(stats.games_kept, 1);
         // 7 plies played + 1 terminal position = 8 positions.
         assert_eq!(samples.len(), 8);
+        // Ply index is recorded 0..=7 across the game.
+        assert_eq!(samples[0].ply, 0);
+        assert_eq!(samples[1].ply, 1);
+        assert_eq!(samples.last().unwrap().ply, 7);
         // White to move at ply 0; White won => win label.
         assert_eq!(samples[0].wdl, crate::encoding::WDL_WIN);
         assert_eq!(samples[0].self_elo, 2500);

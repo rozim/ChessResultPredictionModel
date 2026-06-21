@@ -8,11 +8,12 @@ cd "$(dirname "$0")/.."
 
 SRC="${1:-data/pgn}"
 OUT="${2:-data/shards}"
+GLOB="${3:-twic*.pgn}"
 PREP=./target/release/chess-wdl-prepare
 
-files=( $(ls -1 "$SRC"/twic*.pgn | sort) )
+files=( $(ls -1 "$SRC"/$GLOB | sort) )
 n=${#files[@]}
-echo "Matched $n files from $SRC"
+echo "Matched $n files from $SRC/$GLOB"
 [ "$n" -ge 3 ] || { echo "ERROR: need >=3 files"; exit 1; }
 
 eval_file="${files[$((n-1))]}"

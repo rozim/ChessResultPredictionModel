@@ -60,6 +60,9 @@ pub struct Sample {
     pub oppo_elo: u16,
     /// WDL class (see `WDL_*`). 255 = unlabeled (inference only).
     pub wdl: u8,
+    /// Half-move index of this position within its game (0 = initial position).
+    /// Metadata for game-phase (ply-band) metric buckets; not a model input.
+    pub ply: u16,
     /// True if this exact position also appears in the training set. Set during
     /// `prepare --seen-against`; always `false` for training/inference samples.
     /// Lets eval split metrics by potential memorization. Not a model input.
@@ -233,6 +236,7 @@ mod tests {
             self_elo: 1500,
             oppo_elo: 1500,
             wdl: 255,
+            ply: 0,
             seen: false,
         };
         let planes = s.planes_f32();
@@ -253,6 +257,7 @@ mod tests {
             self_elo: 1500,
             oppo_elo: 1500,
             wdl: 255,
+            ply: 0,
             seen: false,
         };
         assert!((s.material_balance()).abs() < 1e-6);
@@ -278,6 +283,7 @@ mod tests {
             self_elo: 2500,
             oppo_elo: 2400,
             wdl: WDL_WIN,
+            ply: 0,
             seen: false,
         };
         let b = Sample {

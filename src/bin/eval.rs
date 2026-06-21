@@ -98,6 +98,29 @@ fn main() -> Result<()> {
         print_metrics("  unseen (novel)", &eval_subset(&unseen_idx));
     }
 
+    // Game-phase breakdown: metrics by ply band (buckets of 20 half-moves),
+    // with everything past MAX_BAND lumped into a final bucket.
+    const BAND: u16 = 20;
+    const MAX_BAND: u16 = 200;
+    println!("\nply bands (calibrated):");
+    let mut start = 0u16;
+    while start < MAX_BAND {
+        let end = start + BAND;
+        let idxs: Vec<usize> = (0..samples.len())
+            .filter(|&i| samples[i].ply >= start && samples[i].ply < end)
+            .collect();
+        if !idxs.is_empty() {
+            print_metrics(&format!("  ply {start:>3}-{:<3}", end - 1), &eval_subset(&idxs));
+        }
+        start = end;
+    }
+    let tail: Vec<usize> = (0..samples.len())
+        .filter(|&i| samples[i].ply >= MAX_BAND)
+        .collect();
+    if !tail.is_empty() {
+        print_metrics(&format!("  ply {MAX_BAND}+"), &eval_subset(&tail));
+    }
+
     if args.baseline {
         println!();
         let base = vec![meta.base_rate; samples.len()];
