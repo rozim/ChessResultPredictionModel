@@ -1,9 +1,11 @@
 //! chess-wdl-replay — per-move WDL predictions for every game in a PGN.
 //!
 //! Replays each game move by move and, for the position *before* each move,
-//! prints the model's win/draw/loss prediction **from the side-to-move's
-//! perspective** (the same framing the model was trained on). Each game shows
-//! its final result and flags the single most confident prediction.
+//! prints the model's win/draw/loss prediction. The model predicts from the
+//! side-to-move's perspective; for a readable game view we convert every row to
+//! **White's perspective** (so `win` = P(White wins), `loss` = P(White loses)
+//! regardless of whose move it is). Each game shows its final result and flags
+//! the single most confident prediction.
 
 use std::ops::ControlFlow;
 use std::path::PathBuf;
@@ -86,23 +88,21 @@ fn class_name(cls: usize) -> &'static str {
     ["win", "draw", "loss"][cls]
 }
 
-/// Which color a side-to-move prediction favors, in absolute terms.
-fn favored(turn: Color, cls: usize) -> &'static str {
+/// Re-express a side-to-move WDL row in White's perspective: when Black is to
+/// move, the mover's win/loss are White's loss/win (draw is unchanged).
+fn white_pov(turn: Color, p: &[f32; 3]) -> [f32; 3] {
+    if turn == Color::White {
+        *p
+    } else {
+        [p[2], p[1], p[0]]
+    }
+}
+
+/// Beneficiary of a White-perspective class: win -> White, loss -> Black.
+fn beneficiary(cls: usize) -> &'static str {
     match cls {
-        0 => {
-            if turn == Color::White {
-                "White"
-            } else {
-                "Black"
-            }
-        }
-        2 => {
-            if turn == Color::White {
-                "Black"
-            } else {
-                "White"
-            }
-        }
+        0 => "White",
+        2 => "Black",
         _ => "draw",
     }
 }
@@ -197,7 +197,7 @@ fn main() -> Result<()> {
         bail!("no games found in {:?}", args.pgn);
     }
     println!(
-        "loaded {} game(s) from {:?} | temperature T={:.3}",
+        "loaded {} game(s) from {:?} | temperature T={:.3} | win/draw/loss are from White's POV",
         collector.games.len(),
         args.pgn,
         t
@@ -225,9 +225,12 @@ fn main() -> Result<()> {
             "ply", "move", "stm", "win", "draw", "loss", "pred", "conf", "fen"
         );
         let mut best = 0usize;
+        let mut best_conf = -1.0f32;
         for (i, (r, p)) in g.rows.iter().zip(probs.iter()).enumerate() {
-            let cls = argmax(p);
-            if p[cls] > probs[best][argmax(&probs[best])] {
+            let wp = white_pov(r.turn, p); // win/draw/loss for White
+            let cls = argmax(&wp);
+            if wp[cls] > best_conf {
+                best_conf = wp[cls];
                 best = i;
             }
             println!(
@@ -235,25 +238,25 @@ fn main() -> Result<()> {
                 r.ply,
                 r.mv,
                 if r.turn == Color::White { "w" } else { "b" },
-                p[0],
-                p[1],
-                p[2],
+                wp[0],
+                wp[1],
+                wp[2],
                 class_name(cls),
-                p[cls],
+                wp[cls],
                 r.fen,
             );
         }
 
         let r = &g.rows[best];
-        let p = &probs[best];
-        let cls = argmax(p);
+        let wp = white_pov(r.turn, &probs[best]);
+        let cls = argmax(&wp);
         println!(
             " most confident: {} (ply {})  conf {:.3} -> {} ({})  | game result {}",
             r.mv,
             r.ply,
-            p[cls],
+            wp[cls],
             class_name(cls),
-            favored(r.turn, cls),
+            beneficiary(cls),
             g.result,
         );
     }
