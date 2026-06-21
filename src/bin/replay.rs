@@ -11,7 +11,8 @@ use std::path::PathBuf;
 use anyhow::{bail, Result};
 use clap::Parser;
 use pgn_reader::{RawTag, Reader, SanPlus, Visitor};
-use shakmaty::{Chess, Color, Position};
+use shakmaty::fen::Fen;
+use shakmaty::{Chess, Color, EnPassantMode, Position};
 
 use chess_wdl::encoding::{encode_position, Sample};
 use chess_wdl::metrics::{self, argmax};
@@ -40,6 +41,7 @@ struct Row {
     ply: u32,
     mv: String,
     turn: Color,
+    fen: String,
     sample: Sample,
 }
 
@@ -143,12 +145,14 @@ impl Visitor for Collector {
         let (squares, castling, ep_file) = encode_position(&g.pos);
         let turn = g.pos.turn();
         let mv = move_label(g.ply, &san_plus.to_string());
+        let fen = Fen::from_position(&g.pos, EnPassantMode::Legal).to_string();
         match san_plus.san.to_move(&g.pos) {
             Ok(m) => {
                 g.rows.push(Row {
                     ply: g.ply,
                     mv,
                     turn,
+                    fen,
                     sample: Sample {
                         squares,
                         castling,
@@ -217,8 +221,8 @@ fn main() -> Result<()> {
         let probs = metrics::apply_temperature(&logits, t);
 
         println!(
-            " {:>4}  {:<11} {:^3}  {:>5} {:>5} {:>5}  {:<4} {:>5}",
-            "ply", "move", "stm", "win", "draw", "loss", "pred", "conf"
+            " {:>4}  {:<11} {:^3}  {:>5} {:>5} {:>5}  {:<4} {:>5}  {}",
+            "ply", "move", "stm", "win", "draw", "loss", "pred", "conf", "fen"
         );
         let mut best = 0usize;
         for (i, (r, p)) in g.rows.iter().zip(probs.iter()).enumerate() {
@@ -227,7 +231,7 @@ fn main() -> Result<()> {
                 best = i;
             }
             println!(
-                " {:>4}  {:<11} {:^3}  {:>5.3} {:>5.3} {:>5.3}  {:<4} {:>5.3}",
+                " {:>4}  {:<11} {:^3}  {:>5.3} {:>5.3} {:>5.3}  {:<4} {:>5.3}  {}",
                 r.ply,
                 r.mv,
                 if r.turn == Color::White { "w" } else { "b" },
@@ -236,6 +240,7 @@ fn main() -> Result<()> {
                 p[2],
                 class_name(cls),
                 p[cls],
+                r.fen,
             );
         }
 
