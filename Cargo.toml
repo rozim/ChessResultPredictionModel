@@ -25,6 +25,10 @@ path = "src/bin/eval.rs"
 name = "chess-wdl-predict"
 path = "src/bin/predict.rs"
 
+[[bin]]
+name = "chess-wdl-replay"
+path = "src/bin/replay.rs"
+
 [profile.release]
 opt-level = 3
 lto = "thin"

@@ -12,7 +12,7 @@ training run and held-out results: [`REPORT.md`](REPORT.md).
 ## Commands
 
 ```bash
-cargo build --release        # build lib + 4 binaries (release; needed for training speed)
+cargo build --release        # build lib + 5 binaries (release; needed for training speed)
 cargo test --lib             # run the unit-test suite (CPU; ~20 tests)
 cargo test <name>            # run a single test
 cargo clippy                 # lint
@@ -23,6 +23,7 @@ chess-wdl-train --model-config configs/<size>.toml \         # train (default --
     --data <train-shards> --val-data <test-shards> --device cpu --checkpoint-dir <dir>
 chess-wdl-eval --checkpoint <dir> --data <eval-shards> --baseline   # metrics vs baselines
 chess-wdl-predict --checkpoint <dir> --fen "<FEN>"           # single-position WDL
+chess-wdl-replay --checkpoint <dir> --pgn <pgn>             # per-move WDL for every game + result
 ```
 
 The TWIC data lives under `data/pgn/` and prepared shards/checkpoints are
@@ -30,7 +31,7 @@ gitignored. See `REPORT.md` for the exact reproduce commands.
 
 ## Architecture (big picture)
 
-Single Cargo package, library + 4 thin binaries (not the multi-crate workspace
+Single Cargo package, library + 5 thin binaries (not the multi-crate workspace
 sketched in DESIGN.md — collapsed for iteration speed). Module map (`src/`):
 
 - `encoding.rs` — position → `Sample`: 64 square-tokens of 12-way one-hot

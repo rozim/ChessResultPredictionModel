@@ -469,6 +469,29 @@ findings on this machine:
   --data data/shards/eval --device cpu --baseline
 ```
 
+## Inspecting a game move-by-move
+
+`chess-wdl-replay` runs the model over every position of every game in a PGN and
+prints, per move, the WDL prediction from the side-to-move's perspective, plus
+each game's result and its single most confident position.
+
+```bash
+./target/release/chess-wdl-replay --checkpoint checkpoints/nano-twic9 \
+  --pgn data/pgn/twic212.pgn --device cpu --max-games 1
+```
+
+```
+=== Game 1 : Kasparov,G vs Kramnik,V  [result 1/2-1/2] ===
+  ply  move        stm    win  draw  loss  pred  conf
+    0  1. e4        w   0.364 0.297 0.339  win  0.364
+   ...
+   45  23... bxc6   b   0.101 0.140 0.759  loss 0.759
+ most confident: 40... Kf4 (ply 79)  conf 0.872 -> win (Black)  | game result 1/2-1/2
+```
+
+Opening rows hug the base rate (~0.36/0.30/0.34) and sharpen as the position
+resolves — the same game-phase effect quantified by the ply bands in Run 9.
+
 ## Ideas to push further (not yet done)
 
 - `--positions-per-game N` to decorrelate within-game samples (smaller, cleaner
