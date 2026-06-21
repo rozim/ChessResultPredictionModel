@@ -13,6 +13,13 @@ pub struct Metrics {
     pub accuracy: f32,
     pub brier: f32,
     pub ece: f32,
+    /// Expected-score error: predicted points `E = P(win) + 0.5·P(draw)` vs the
+    /// realized game points (win=1, draw=0.5, loss=0), all side-to-move relative.
+    pub score_mae: f32,
+    pub score_rmse: f32,
+    /// Signed mean(predicted − actual): >0 means the model over-estimates the
+    /// side-to-move's prospects.
+    pub score_bias: f32,
     /// confusion[true][pred].
     pub confusion: [[u32; N_CLASSES]; N_CLASSES],
 }
@@ -34,6 +41,9 @@ pub fn evaluate(probs: &[[f32; 3]], labels: &[u8]) -> Metrics {
     let mut brier = 0.0f64;
     let mut correct = 0usize;
     let mut confusion = [[0u32; N_CLASSES]; N_CLASSES];
+    let mut score_abs = 0.0f64;
+    let mut score_sq = 0.0f64;
+    let mut score_signed = 0.0f64;
 
     // 10-bin reliability on the predicted-class confidence for ECE.
     let mut bin_conf = [0.0f64; 10];
@@ -53,6 +63,14 @@ pub fn evaluate(probs: &[[f32; 3]], labels: &[u8]) -> Metrics {
             correct += 1;
         }
         confusion[y][pred] += 1;
+
+        // Expected score (points) vs realized.
+        let e = (q[0] + 0.5 * q[1]) as f64;
+        let actual = points(y);
+        let d = e - actual;
+        score_abs += d.abs();
+        score_sq += d * d;
+        score_signed += d;
 
         let conf = q[pred];
         let b = ((conf * 10.0) as usize).min(9);
@@ -76,8 +94,59 @@ pub fn evaluate(probs: &[[f32; 3]], labels: &[u8]) -> Metrics {
         accuracy: correct as f32 / n as f32,
         brier: (brier / n as f64) as f32,
         ece: ece as f32,
+        score_mae: (score_abs / n as f64) as f32,
+        score_rmse: (score_sq / n as f64).sqrt() as f32,
+        score_bias: (score_signed / n as f64) as f32,
         confusion,
     }
+}
+
+/// Realized game points for a WDL label (side-to-move relative).
+fn points(label: usize) -> f64 {
+    match label {
+        0 => 1.0, // win
+        1 => 0.5, // draw
+        _ => 0.0, // loss
+    }
+}
+
+/// One bin of the expected-score reliability table.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ScoreBin {
+    pub lo: f32,
+    pub hi: f32,
+    pub n: usize,
+    pub mean_pred: f32,
+    pub mean_real: f32,
+}
+
+/// Reliability of the expected score `E = P(win) + 0.5·P(draw)` against the
+/// realized game points, bucketed into `bins` equal-width bins over [0,1].
+/// Empty bins are omitted. A well-calibrated model has `mean_pred ≈ mean_real`
+/// in every bin.
+pub fn expected_score_reliability(probs: &[[f32; 3]], labels: &[u8], bins: usize) -> Vec<ScoreBin> {
+    let bins = bins.max(1);
+    let mut sum_pred = vec![0f64; bins];
+    let mut sum_real = vec![0f64; bins];
+    let mut cnt = vec![0usize; bins];
+    for (p, &y) in probs.iter().zip(labels.iter()) {
+        let q = clamp_norm(*p);
+        let e = q[0] + 0.5 * q[1];
+        let b = ((e * bins as f32) as usize).min(bins - 1);
+        sum_pred[b] += e as f64;
+        sum_real[b] += points(y as usize);
+        cnt[b] += 1;
+    }
+    (0..bins)
+        .filter(|&b| cnt[b] > 0)
+        .map(|b| ScoreBin {
+            lo: b as f32 / bins as f32,
+            hi: (b + 1) as f32 / bins as f32,
+            n: cnt[b],
+            mean_pred: (sum_pred[b] / cnt[b] as f64) as f32,
+            mean_real: (sum_real[b] / cnt[b] as f64) as f32,
+        })
+        .collect()
 }
 
 pub fn argmax(p: &[f32; 3]) -> usize {
@@ -242,6 +311,35 @@ mod tests {
         assert!(m.log_loss < 1e-3);
         assert_eq!(m.accuracy, 1.0);
         assert!(m.brier < 1e-3);
+        // Perfect probabilities also nail the expected score.
+        assert!(m.score_mae < 1e-3);
+        assert!(m.score_rmse < 1e-3);
+        assert!(m.score_bias.abs() < 1e-3);
+    }
+
+    #[test]
+    fn expected_score_error_and_bias() {
+        // One position: model says 50/50 win/loss (E=0.5) but it was a win
+        // (actual 1.0). Error 0.5, and the model under-estimates -> bias -0.5.
+        let probs = vec![[0.5, 0.0, 0.5]];
+        let labels = [0u8];
+        let m = evaluate(&probs, &labels);
+        assert!((m.score_mae - 0.5).abs() < 1e-6);
+        assert!((m.score_rmse - 0.5).abs() < 1e-6);
+        assert!((m.score_bias - (-0.5)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn expected_score_reliability_bins() {
+        // All predictions E=0.5; half the games won, half lost -> realized 0.5.
+        let probs = vec![[0.5, 0.0, 0.5]; 4];
+        let labels = [0u8, 2, 0, 2];
+        let bins = expected_score_reliability(&probs, &labels, 10);
+        assert_eq!(bins.len(), 1); // everything lands in the E∈[0.5,0.6) bin
+        let b = &bins[0];
+        assert_eq!(b.n, 4);
+        assert!((b.mean_pred - 0.5).abs() < 1e-6);
+        assert!((b.mean_real - 0.5).abs() < 1e-6);
     }
 
     #[test]

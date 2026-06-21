@@ -469,6 +469,21 @@ findings on this machine:
   --data data/shards/eval --device cpu --baseline
 ```
 
+## Expected-score (points) metric
+
+Alongside log-loss/accuracy/Brier/ECE, `chess-wdl-eval` reports an
+**expected-score** error: collapse the WDL prediction to expected points
+`E = P(win) + 0.5·P(draw)` and compare to the realized game points
+(win=1, draw=0.5, loss=0), side-to-move relative. It prints `score_mae` /
+`score_rmse` on every metrics line (so it flows into the seen/unseen and
+ply-band splits too), a signed `bias`, and a 10-bin reliability table.
+
+On the Run-9 model / eval set (twic999): **MAE 0.333, RMSE 0.393, bias +0.005**
+(essentially unbiased), and the reliability table tracks the diagonal closely
+(e.g. E∈[0.9,1.0]: predicted 0.935 vs realized 0.931). Consistent with the phase
+story, point estimates are least accurate in the openings (MAE ~0.368) and
+sharpest in resolved later positions (~0.324).
+
 ## Inspecting a game move-by-move
 
 `chess-wdl-replay` runs the model over every position of every game in a PGN and

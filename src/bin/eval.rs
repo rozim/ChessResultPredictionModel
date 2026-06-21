@@ -35,8 +35,8 @@ struct Args {
 
 fn print_metrics(name: &str, m: &Metrics) {
     println!(
-        "{name:<22} n={} log_loss={:.4} acc={:.4} brier={:.4} ece={:.4}",
-        m.n, m.log_loss, m.accuracy, m.brier, m.ece
+        "{name:<22} n={} log_loss={:.4} acc={:.4} brier={:.4} ece={:.4} score_mae={:.4} score_rmse={:.4}",
+        m.n, m.log_loss, m.accuracy, m.brier, m.ece, m.score_mae, m.score_rmse
     );
 }
 
@@ -142,6 +142,20 @@ fn main() -> Result<()> {
         println!(
             "  {}              {:6} {:5} {:5}",
             names[t], m.confusion[t][0], m.confusion[t][1], m.confusion[t][2]
+        );
+    }
+
+    // Expected-score reliability: predicted points E=P(win)+0.5*P(draw) vs the
+    // realized game points, side-to-move relative. Well-calibrated => pred≈real.
+    println!(
+        "\nexpected score  E=P(win)+0.5*P(draw)   bias={:+.4} (>0 = over-estimates side-to-move)",
+        m.score_bias
+    );
+    println!("  E bin          n      pred  realized");
+    for b in metrics::expected_score_reliability(&probs, &labels, 10) {
+        println!(
+            "  {:.1}-{:.1} {:>10} {:>8.3} {:>9.3}",
+            b.lo, b.hi, b.n, b.mean_pred, b.mean_real
         );
     }
     Ok(())
