@@ -2,6 +2,13 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Continuation notes
+
+See [`MEMORY.md`](MEMORY.md) for portable working notes / handoff context
+(preferences, data locations, current best model, and the pending mega2400 run).
+This repo uses `MEMORY.md` instead of `~/.claude` auto-memory so work can move
+between machines.
+
 ## What this is
 
 A Rust implementation of a Chessformer/Maia-3-inspired model that predicts
