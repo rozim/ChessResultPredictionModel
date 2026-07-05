@@ -33,10 +33,20 @@ path = "src/bin/replay.rs"
 opt-level = 3
 lto = "thin"
 
-[dependencies]
-anyhow = "1.0.102"
+# macOS (M1) gets the Metal GPU backend + Accelerate BLAS. On other platforms
+# these Apple-only features are omitted, so the crate builds CPU-only.
+[target.'cfg(target_os = "macos")'.dependencies]
 candle-core = { version = "0.10.2", features = ["metal", "accelerate"] }
 candle-nn = { version = "0.10.2", features = ["accelerate"] }
+
+[dependencies]
+anyhow = "1.0.102"
+# Base (cross-platform, CPU) candle. macOS additionally enables metal +
+# accelerate via the target-specific table below; Cargo unions the features,
+# so an M1 build still gets the Metal GPU + Accelerate BLAS path unchanged
+# while Linux/other targets build CPU-only (no objc2/Metal, no Accelerate).
+candle-core = "0.10.2"
+candle-nn = "0.10.2"
 clap = { version = "4.6.1", features = ["derive"] }
 pgn-reader = "0.29.0"
 rand = "0.10.1"

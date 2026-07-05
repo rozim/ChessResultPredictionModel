@@ -15,10 +15,13 @@ use crate::model::{Batch, ChessWdlModel};
 /// Pick the Metal GPU when requested and available, else CPU.
 pub fn select_device(prefer_metal: bool) -> Device {
     if prefer_metal {
+        #[cfg(target_os = "macos")]
         match Device::new_metal(0) {
             Ok(d) => return d,
             Err(e) => eprintln!("metal unavailable ({e}); falling back to CPU"),
         }
+        #[cfg(not(target_os = "macos"))]
+        eprintln!("metal not compiled in on this platform (macOS-only); using CPU");
     }
     Device::Cpu
 }
