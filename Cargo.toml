@@ -39,6 +39,14 @@ lto = "thin"
 candle-core = { version = "0.10.2", features = ["metal", "accelerate"] }
 candle-nn = { version = "0.10.2", features = ["accelerate"] }
 
+# Non-macOS (Linux) uses Intel MKL for multi-threaded CPU matmul — candle's
+# default gemm is single-threaded and dominates step time (~2.5 s/step for
+# nano); MKL cuts that several-fold. Accelerate is macOS-only, so this is the
+# CPU BLAS backend everywhere else.
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+candle-core = { version = "0.10.2", features = ["mkl"] }
+candle-nn = { version = "0.10.2", features = ["mkl"] }
+
 [dependencies]
 anyhow = "1.0.102"
 # Base (cross-platform, CPU) candle. macOS additionally enables metal +
