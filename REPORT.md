@@ -13,6 +13,7 @@ win/draw/loss model described in [`DESIGN.md`](DESIGN.md).
 - **Run 7** — same `tiny`, trained to convergence (~12 epochs, ~36 h) → **51.3%** acc: recovers the under-convergence loss but still **doesn't beat nano** at ~36× the cost. Settles it: bigger model is not worth it here (see §Run 7).
 - **Run 8** — memorization split: flag eval/test positions that also occur in train (14.9% / 13.5% overlap) → **seen 32.9%** vs **unseen 44.0%** acc. Counterintuitively, seen positions are *harder*: the shared ones are mostly low-signal, inconsistently-labelled openings, so on a single-issue train set the split tracks game *phase*, not memorization (see §Run 8).
 - **Run 9** — scale-up + ply bands: **22.6M** train positions (twic900–999), nano capped at 13k steps (~0.3 epoch, ~3.8 h) → **48.5%** acc / 0.988 log-loss. New per-ply-band metrics show accuracy climbing **37% (openings) → ~66% (deep middlegame)**, which *explains* the Run-8 inversion: "seen" ≈ early-ply ≈ intrinsically hard, not memorized (see §Run 9).
+- **Run 10** — elite Elo≥2400 across **all 1440 TWIC issues**, nano trained **to convergence** (1-epoch cosine, batch 1024, ~8.4 h on a 4-core Linux/MKL box) → **44.5%** acc / 1.046 log-loss on a fresh, recent held-out set (twic1640–1649). Beats material (38.4%) and base-rate (31.9%) and is well-calibrated (ECE 2.4%), but draw-biased; the lower headline vs Run 4 is a less-draw-heavy eval (32% vs 48%) + Elo-free, not a regression (see §Run 10).
 
 ## Run 1 — baseline (twic210 only, terminal positions included)
 
@@ -424,6 +425,80 @@ Reproduce the data with `./scripts/regen-data.sh /path/to/Twic data/shards 'twic
   **resolved, material/king-safety-laden later positions**. A ply window
   (`--min-ply`) would raise headline accuracy by simply dropping the hard early
   band, as Run 2 did.
+
+## Run 10 — elite Elo≥2400 across all TWIC, nano trained to convergence
+
+First run on a **second machine** (a 4-core Linux box, 31 GB) rather than the M1.
+Two firsts: (1) the elite Elo≥2400 filter applied across the **entire** TWIC
+collection (all 1440 issues, 210–1649), and (2) nano trained for a **full epoch
+to convergence** (prior elite runs were small or capped).
+
+### Setup
+
+| | |
+|---|---|
+| **Filter / sampling** | `--require-elo --min-elo 2400 --min-ply 20 --max-ply 100 --positions-per-game 10` (no upper Elo cap, unlike Run 4's 2899) |
+| **Split** | by **numeric** issue number: train = issues < 1630 (twic210–1629, 1420 files); test = twic1630–1639 (10); eval = twic1640–1649 (10); test/eval `--seen-against` train |
+| **Train** | **7,769,830** positions (33.1% win / 38.9% draw / 27.7% loss); 6.96M unique |
+| **Test / early-stop** | twic1630–1639 → 98,187 (7.2% seen in train) |
+| **Held-out eval** | twic1640–1649 → **94,567** (7.4% seen; **less draw-heavy: 37/32/31**) |
+| **Model** | `configs/nano.toml` (0.15M, board-only / Elo-free) |
+| **Training** | CPU (Intel MKL BLAS), `nice -19`, batch **1024**, lr **5e-4**, 1-epoch cosine = **7,588 steps**, val every 1000, `--early-stop-patience 10`. **~8.4 h**; best val **1.0473** (step 5000), fitted **T = 1.668** |
+
+Build note: this box has no Apple Accelerate, so candle's `mkl` feature supplies
+multi-threaded CPU BLAS (~1.25× faster steps here — modest on 4 cores / a 0.15M
+model). Metal/Accelerate are now macOS-only via `cfg(target_os = "macos")`.
+
+### Held-out results (twic1640–1649, 94,567 positions)
+
+| Metric | **Model** (cal., T=1.67) | Material | Base-rate |
+|---|---|---|---|
+| **Accuracy** | **44.5%** | 38.4% | 31.9% |
+| **Log-loss** ↓ | **1.046** | 1.089 | 1.106 |
+| **Brier** ↓ | **0.631** | 0.660 | 0.672 |
+| **ECE** ↓ | **2.4%** | 2.1% | 7.2% |
+| **Score MAE** ↓ | **0.336** | 0.344 | 0.347 |
+
+Confusion (rows = true; recall win **37.9%** / draw **72.5%** / loss **23.4%**):
+
+```
+          win   draw   loss
+win     13372  18548   3361
+draw     5888  21893   2426
+loss     5840  16430   6809
+```
+
+Ply bands (calibrated): **38.1%** (20–39) → 45.7% (40–59) → 50.0% (60–79) →
+**54.3%** (80–99). Seen/unseen (7.4% seen): **46.2% vs 44.4%** — no memorization
+gap. Expected-score bias −0.008 (near-unbiased); after the T=1.67 softening the
+model is slightly *under*-confident in the high-E bins (E∈[0.7,0.8]: pred 0.74 vs
+realized 0.84).
+
+### Interpretation (Run 10)
+
+- **Clears every baseline** (+6.1 pts acc over material, +12.5 over base-rate;
+  lower log-loss/Brier) and stays **well-calibrated** (ECE 2.4%). It reads real
+  positional signal, and scale + convergence give a much steadier eval than the
+  ~15k-position Run-4 elite set (this eval is ~95k).
+- **The 44.5% headline is lower than Run 4's 53.8%, but not a regression** — it's
+  a harder, fairer comparison. Two mechanical reasons: (a) this held-out set
+  (recent 2024-era elite games, twic1640–1649) is **far less draw-heavy** (32%
+  draws vs Run 4's 48%), which lowers the achievable accuracy for a draw-hedging
+  model — "always draw" scores only 31.9% here vs ~48% there; and (b) the model
+  is **Elo-free** (Run 5 showed that alone costs ~2 pts on TWIC).
+- **Draw bias persists** (predicts draw for ~60% of positions; loss recall just
+  23%), the same elite-distribution hedge as Run 4 — draws dominate elite games
+  and a single quiet position rarely reveals the eventual decisive result.
+- **Signs of mild overfit at convergence:** train loss fell to ~1.01 while best
+  val was 1.047 (step 5000, then drifted up to ~1.055), and calibration needed a
+  large **T = 1.668**. One epoch of 7.77M positions at lr 5e-4 slightly overshot;
+  best-checkpoint selection + temperature scaling recovered a calibrated model.
+  A shorter horizon or lighter LR would likely land the same val with less
+  overconfidence.
+- **Takeaway:** on the elite distribution the ceiling is the **draw dominance**,
+  not the model. Levers to try next: `--draw-weighting` (trade calibration for
+  balanced win/loss recall, per Run 5b), and — the recurring theme — testing a
+  **larger model** now that there is finally enough elite data (7.77M) to feed it.
 
 ## Notes on the M1 GPU path
 
