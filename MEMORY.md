@@ -15,21 +15,43 @@ record only what isn't obvious from the code, `CLAUDE.md`, `DESIGN.md`, or git.
   workflow). End commit messages with the
   `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>` trailer. Commit/push
   only when asked.
+- **Build is cross-platform (as of 2026-07):** macOS (M1) builds with the Metal
+  GPU + Accelerate BLAS; **Linux/other targets build CPU-only** (candle's
+  `metal`/`accelerate` features are gated behind a `cfg(target_os = "macos")`
+  dep table, and `select_device`'s `new_metal` call is `#[cfg]`-guarded). So on
+  the Linux box just `cargo build --release` — everything runs `--device cpu`.
+- **Toolchain on the Linux box:** needs **rustup stable** (was 1.96.1); the
+  distro's apt `cargo` (1.75) is **too old** for this repo's v4 `Cargo.lock`.
+  `source ~/.cargo/env` (or prepend `~/.cargo/bin` to PATH) so cargo/rustc
+  resolve to the rustup toolchain, not `/usr/bin/cargo`.
 
 ## Data locations (IMPORTANT — most data is NOT in git)
 
 - The repo's `data/pgn/` holds only **twic210/211/212** (3 small files). The
-  full TWIC corpus is at **`/Users/dave/Projects/ChessData/Twic/`** —
-  `twic*.pgn` (1440 issues) plus `mega2400.pgn` (3.4 GB, 4.24M games, rated 2400+).
-  **This directory is outside the repo and won't sync via git** — it must exist
-  on whatever machine you continue on.
+  full TWIC corpus lives outside the repo (won't sync via git; must exist on
+  whatever machine you continue on) — path is **machine-dependent**:
+  - Linux box (current): **`/home/dave/Projects/ChessData/Twic/`**
+  - macOS (M1): `/Users/dave/Projects/ChessData/Twic/`
+
+  It contains `twic*.pgn` — **1440 issues numbered 210–1649** (note: numbers
+  are non-contiguous with lexicographic order; sort **numerically** on the digits
+  after `twic`) — plus `mega2400.pgn` (3.4 GB, 4.24M games, rated 2400+) and
+  `mega2600_part_*.pgn`.
 - `data/shards/` (prepared shards) and `checkpoints/` are **gitignored** — they
   do not travel. Regenerate shards with `scripts/regen-data.sh <SRC> <OUT> <GLOB>`
-  (e.g. `scripts/regen-data.sh /Users/dave/Projects/ChessData/Twic data/shards 'twic9??.pgn'`).
+  (e.g. `scripts/regen-data.sh /home/dave/Projects/ChessData/Twic data/shards 'twic9??.pgn'`).
   It builds train first, then stamps test/eval `--seen-against` it.
 
-## Current state (as of 2026-06)
+## Current state (as of 2026-07)
 
+- **Elite Elo≥2400 all-TWIC dataset (`data/shards/`, being regenerated
+  2026-07-05):** numeric split — **train = issues < 1630** (twic210–1629, 1420
+  files), **test = twic1630–1639** (10), **eval = twic1640–1649** (10); test/eval
+  stamped `--seen-against` train. Recipe `--require-elo --min-elo 2400 --min-ply
+  20 --max-ply 100 --positions-per-game 10`. ~8M train positions, ~560 MB shards,
+  draw-heavy (~39%). Not built by `regen-data.sh` (that splits lexicographically
+  by whole files, holding out only the last 2); use the numeric-split prep script.
+  **No model trained on it yet.**
 - Best model so far: **`checkpoints/nano-twic9`** — `nano` trained on twic900–997
   (22.6M positions), 13k-step cap (~0.3 epoch), ~3 h 48 m, best val 0.9767,
   T=0.860; held-out (twic999) acc **48.5%**, log-loss 0.988. Checkpoint is
@@ -42,22 +64,33 @@ record only what isn't obvious from the code, `CLAUDE.md`, `DESIGN.md`, or git.
 - `chess-wdl-replay` prints per-move WDL (from **White's POV**) + FEN + result +
   most-confident position per game.
 
-## Pending: the "go big" mega2400 run (blocked by RAM here)
+## RAM ceiling & the "go big" runs
 
-Goal: train on `mega2400.pgn` (~4.24M games). **Blocked on this machine: only
-16 GB RAM**, and the pipeline loads *all* samples into RAM (`prepare` builds one
-`Vec`; `read_shard_dir` loads everything). Full density (~200M+ positions ≈
-16–24 GB) won't fit. To do on a bigger-RAM machine:
+The pipeline loads *all* samples into RAM (`prepare` builds one `Vec`;
+`read_shard_dir` loads everything), so RAM caps the dataset. **The ceiling is
+machine-dependent:**
+- macOS (M1) box: **16 GB** — full-density mega2400/broad corpus won't fit.
+- Linux box (current): **31 GB** (~17 GB free in practice).
 
-1. **Split the single PGN into train/test/eval by games** — `regen-data.sh` only
-   splits by *whole files*, so it can't handle one file. Need a game-level
-   splitter (route games to 3 sets; hold out ~10k games each for test/eval).
-2. **Sampling:** if RAM-limited, use the Run-2 decorrelated recipe
-   (`--min-ply 20 --max-ply 100 --positions-per-game 10` → ~40M positions, also
-   the best-performing recipe). With ample RAM, full density is possible but may
-   want a streaming/chunked loader rewrite of `prepare` + `read_shard_dir`.
-3. Watch contamination: mega2400 likely contains TWIC games, so don't reuse
-   twic998/999 as eval — split mega itself.
+**Full-density all-TWIC** (~330–370M positions) needs ~25–27 GB → won't fit
+even on the 31 GB box. **But the `--min-elo 2400` filter shrinks it enough to
+fit**: only ~17% of TWIC games have both players ≥2400, and with the decorrelated
+recipe that's ~8M positions (~600 MB). A `Sample` is ~74 B in RAM.
+
+- **Elo≥2400 all-TWIC (done, 2026-07):** `--require-elo --min-elo 2400
+  --min-ply 20 --max-ply 100 --positions-per-game 10` over all 1440 issues →
+  ~8M train positions (33/39/28 W/D/L), ~560 MB shards. See the elite-split note
+  in Current state.
+
+**`mega2400.pgn` single-file run — still pending** (`~4.24M games`). Even
+Elo-implicit (it's already 2400+), full density is ~200M+ positions ≈ 16–24 GB;
+tractable on the 31 GB box only with the decorrelated recipe, or after a
+streaming/chunked loader rewrite of `prepare` + `read_shard_dir`. Two blockers:
+1. **Split the single PGN into train/test/eval by games** — `regen-data.sh` (and
+   the numeric-split variant) only split by *whole files*, so they can't handle
+   one file. Need a game-level splitter (hold out ~10k games each for test/eval).
+2. **Contamination:** mega2400 likely contains TWIC games, so split mega itself
+   for eval rather than reusing TWIC-derived held-out issues.
 
 ## Perf / budget facts
 
