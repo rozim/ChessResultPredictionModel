@@ -51,7 +51,16 @@ record only what isn't obvious from the code, `CLAUDE.md`, `DESIGN.md`, or git.
   20 --max-ply 100 --positions-per-game 10`. ~8M train positions, ~560 MB shards,
   draw-heavy (~39%). Not built by `regen-data.sh` (that splits lexicographically
   by whole files, holding out only the last 2); use the numeric-split prep script.
-  **No model trained on it yet.**
+- **`checkpoints/nano-elite2400` (trained 2026-07-05):** `nano`, MKL build,
+  batch 1024, lr 5e-4, 1-epoch cosine (7588 steps), ~8.4 h CPU. Best val
+  1.0473 (step 5000), fitted **T=1.668** (high → some overfit; best-checkpoint
+  selection caught it). Held-out eval (twic1640–1649, 94.6k): **acc 44.5% /
+  log-loss 1.046 / Brier 0.631 / ECE 2.4%**, vs material 38.4% / base-rate
+  31.9%. Draw-biased (recall win 38 / draw 73 / loss 23). Lower headline than
+  elite Run 4 (53.8%) but **not comparable** — this eval is far less draw-heavy
+  (~32% vs 48%) and the model is Elo-free (~-2 pts, per Run 5). Well clear of
+  baselines and well-calibrated. Checkpoint is gitignored (local only).
+  Worth a REPORT.md "Run 10" writeup.
 - Best model so far: **`checkpoints/nano-twic9`** — `nano` trained on twic900–997
   (22.6M positions), 13k-step cap (~0.3 epoch), ~3 h 48 m, best val 0.9767,
   T=0.860; held-out (twic999) acc **48.5%**, log-loss 0.988. Checkpoint is
