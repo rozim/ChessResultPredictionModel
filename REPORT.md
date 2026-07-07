@@ -14,6 +14,7 @@ win/draw/loss model described in [`DESIGN.md`](DESIGN.md).
 - **Run 8** — memorization split: flag eval/test positions that also occur in train (14.9% / 13.5% overlap) → **seen 32.9%** vs **unseen 44.0%** acc. Counterintuitively, seen positions are *harder*: the shared ones are mostly low-signal, inconsistently-labelled openings, so on a single-issue train set the split tracks game *phase*, not memorization (see §Run 8).
 - **Run 9** — scale-up + ply bands: **22.6M** train positions (twic900–999), nano capped at 13k steps (~0.3 epoch, ~3.8 h) → **48.5%** acc / 0.988 log-loss. New per-ply-band metrics show accuracy climbing **37% (openings) → ~66% (deep middlegame)**, which *explains* the Run-8 inversion: "seen" ≈ early-ply ≈ intrinsically hard, not memorized (see §Run 9).
 - **Run 10** — elite Elo≥2400 across **all 1440 TWIC issues**, nano trained **to convergence** (1-epoch cosine, batch 1024, ~8.4 h on a 4-core Linux/MKL box) → **44.5%** acc / 1.046 log-loss on a fresh, recent held-out set (twic1640–1649). Beats material (38.4%) and base-rate (31.9%) and is well-calibrated (ECE 2.4%), but draw-biased; the lower headline vs Run 4 is a less-draw-heavy eval (32% vs 48%) + Elo-free, not a regression (see §Run 10).
+- **Run 11** — **`tiny` (0.9M) to convergence on the same 7.77M elite set** (same recipe as Run 10 bar the config; ~2 days CPU) → **47.1%** acc / **1.022** log-loss, **beating nano (Run 10) on every held-out metric** (+2.6 pts acc, −0.024 log-loss, ECE 1.6% vs 2.4%) and less draw-biased. **First time in the run history a bigger model beats nano** — prior tests (Runs 3/6/7) were ≤0.78M positions; at 7.77M the capacity finally pays off, confirming Run 3 (see §Run 11).
 
 ## Run 1 — baseline (twic210 only, terminal positions included)
 
@@ -499,6 +500,74 @@ realized 0.84).
   not the model. Levers to try next: `--draw-weighting` (trade calibration for
   balanced win/loss recall, per Run 5b), and — the recurring theme — testing a
   **larger model** now that there is finally enough elite data (7.77M) to feed it.
+
+## Run 11 — `tiny` (0.9M) to convergence: capacity finally beats nano
+
+The Run-10 takeaway ("try a larger model now that data is 7.77M") tested directly.
+Every prior head-to-head — Run 3 (`tiny` on ⅓ data), Run 6 (`tiny` under-trained),
+Run 7 (`tiny` converged, ~36 h) — found `tiny` **≤** nano, but all on ≤0.78M
+positions. This run gives `tiny` the full elite corpus and a clean apples-to-apples
+setup against Run 10.
+
+### Setup
+
+Identical to Run 10 **except the model config** (so the comparison isolates
+capacity): same `data/shards/` (7.77M train / 98k test / 94.6k eval), same
+batch 1024, lr 5e-4, 1-epoch cosine (7,588 steps), val every 1000, MKL build,
+`nice -19`.
+
+| | |
+|---|---|
+| **Model** | `configs/tiny.toml` — d_model 128, 4 layers, 4 heads, FFN 512 → **0.9M** (6× nano), board-only / Elo-free |
+| **Training** | CPU (MKL), **~18 s/step** on 4 cores (~5× nano's 3.8 s), **~2 days** wall-clock. Best val **1.0177**, fitted **T = 1.449** |
+| **Convergence** | val fell 1.065 → 1.026 (step 3k) → 1.020 (4k) → **1.018 (7.6k)**, **still improving at the horizon** — mildly *under*-converged (as expected: `tiny` optimizes slower than nano, cf. Run 6/7) |
+
+### Held-out results (twic1640–1649, 94,567 positions) — vs nano Run 10
+
+| Metric | **`tiny`** (cal., T=1.45) | nano Run 10 (T=1.67) | Material | Base-rate |
+|---|---|---|---|---|
+| **Accuracy** | **47.1%** | 44.5% | 38.4% | 31.9% |
+| **Log-loss** ↓ | **1.022** | 1.046 | 1.089 | 1.106 |
+| **Brier** ↓ | **0.615** | 0.631 | 0.660 | 0.672 |
+| **ECE** ↓ | **1.6%** | 2.4% | 2.1% | 7.2% |
+| **Score MAE** ↓ | **0.330** | 0.336 | 0.344 | 0.347 |
+
+Confusion (rows = true; recall win **41.4%** / draw **67.9%** / loss **32.5%**):
+
+```
+          win   draw   loss
+win     14602  16280   4399
+draw     6048  20517   3642
+loss     5917  13713   9449
+```
+
+Ply bands (calibrated): **39.7%** (20–39) → 49.6% (40–59) → 53.5% (60–79) →
+**55.7%** (80–99). Seen/unseen (7.4% seen): **46.5% vs 47.2%** — no memorization
+gap. Expected-score bias −0.013.
+
+### Interpretation (Run 11) — the first time bigger wins
+
+- **`tiny` beats nano on every held-out metric** (+2.6 pts acc, −0.024 log-loss,
+  lower Brier, lower ECE), and against nano's identical setup — so this is a clean
+  **capacity** win, not a data or hyperparameter artifact. Ply bands improve
+  uniformly (nano 38.1→54.3 vs `tiny` 39.7→55.7).
+- **Why now, when Runs 3/6/7 said "bigger isn't worth it"?** Those verdicts were
+  all at **≤0.78M positions**, where `tiny` overfit (Run 3) or couldn't converge
+  in budget (Runs 6/7). At **7.77M** the extra capacity finally has the data to
+  earn its keep — exactly the data-efficiency hypothesis Run 3 raised. The lesson
+  isn't "nano vs tiny"; it's that the **optimal model size scales with data**, and
+  the previous elite corpora were too small to see it.
+- **`tiny` is also *better* calibrated** (T 1.45 vs 1.67, ECE 1.6% vs 2.4%) and
+  **less draw-biased** (predicts draw for 53% of positions vs nano's 60%; loss
+  recall 33% vs 23%). More capacity here reduces the draw-hedging, the opposite of
+  the usual "bigger overfits more" worry — because the bottleneck was
+  representational, not data-fitting.
+- **Still under-converged:** val was falling at the 7,588-step horizon, so a longer
+  run (2 epochs) or lower final LR would likely widen the gap further — this is a
+  *lower bound* on `tiny`'s edge, not its ceiling.
+- **Cost:** ~2 days vs nano's 8.4 h — **~5.4×** the wall-clock for +2.6 pts /
+  −0.024 log-loss. A real, clean win, but an expensive one on a 4-core CPU;
+  the natural next step (`small`, 5M) is ~2 weeks here and wants a GPU.
 
 ## Notes on the M1 GPU path
 
