@@ -60,7 +60,21 @@ record only what isn't obvious from the code, `CLAUDE.md`, `DESIGN.md`, or git.
   elite Run 4 (53.8%) but **not comparable** — this eval is far less draw-heavy
   (~32% vs 48%) and the model is Elo-free (~-2 pts, per Run 5). Well clear of
   baselines and well-calibrated. Checkpoint is gitignored (local only).
-  Worth a REPORT.md "Run 10" writeup.
+  Documented as REPORT.md Run 10.
+- **`checkpoints/tiny-elite2400` (trained 2026-07-06, ~2 days CPU/MKL):** `tiny`
+  (0.9M), same setup as nano-elite2400 except the config (batch 1024, lr 5e-4,
+  1-epoch cosine 7588 steps, ~18 s/step on 4 cores). Best val **1.0177**, T=1.449.
+  Held-out eval (twic1640–1649, 94.6k): **acc 47.1% / log-loss 1.022 / Brier
+  0.615 / ECE 1.6%** — **beats nano-elite2400 on every metric** (+2.6 pts acc,
+  −0.024 log-loss, better-calibrated) and is less draw-biased (recall win 41 /
+  draw 68 / loss 33). **First time in the whole run history a bigger model beats
+  nano** — because prior tests were ≤0.78M positions (Runs 3/6/7); at 7.77M the
+  capacity finally pays off (confirms Run 3's hypothesis). Was still mildly
+  UNDER-converged at the horizon (val improving at the last step), so more steps
+  would likely widen the gap. Cost ~5.4× nano's wall-clock. Checkpoint gitignored.
+  **Deserves a REPORT.md "Run 11" writeup.** Takeaway: on this elite corpus,
+  **more capacity now helps given the data scale** — worth trying `small` if a
+  GPU becomes available (infeasible on this 4-core CPU box, ~2 weeks).
 - Best model so far: **`checkpoints/nano-twic9`** — `nano` trained on twic900–997
   (22.6M positions), 13k-step cap (~0.3 epoch), ~3 h 48 m, best val 0.9767,
   T=0.860; held-out (twic999) acc **48.5%**, log-loss 0.988. Checkpoint is
