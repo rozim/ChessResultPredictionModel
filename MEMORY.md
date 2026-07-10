@@ -75,6 +75,19 @@ record only what isn't obvious from the code, `CLAUDE.md`, `DESIGN.md`, or git.
   **Deserves a REPORT.md "Run 11" writeup.** Takeaway: on this elite corpus,
   **more capacity now helps given the data scale** — worth trying `small` if a
   GPU becomes available (infeasible on this 4-core CPU box, ~2 weeks).
+- **`checkpoints/tiny-elite2400-2ep` (trained 2026-07-10, ~2.8 days CPU/MKL) —
+  CURRENT BEST on the elite set:** same as `tiny-elite2400` but **2 epochs**
+  (15176-step cosine, ~18 s/step). Best val **1.0004**, T=1.295; val CONVERGED
+  (plateaued at end, unlike the 1-epoch run which was under-converged). Held-out
+  (twic1640–1649, 94.6k): **acc 48.3% / log-loss 1.011 / Brier 0.607 / ECE 1.5%**
+  — beats 1-epoch tiny (Run 11: 47.1% / 1.022) on every metric (+1.2 pts acc,
+  −0.011 log-loss) and is even less draw-biased (recall win 51 / draw 62 / loss
+  31; predicts draw only 47% vs Run 11's 53%, nano's 60%). So the 2nd epoch
+  helped, modestly (~1.75× cost for +1.2 pts) — diminishing returns, near tiny's
+  ceiling on this data. Clean monotonic trend nano→tiny-1ep→tiny-2ep: acc
+  44.5→47.1→48.3, T 1.67→1.45→1.30, draw-hedging 60→53→47% (more
+  capacity + convergence = sharper, better-calibrated, less-hedging). Checkpoint
+  gitignored. **Deserves a REPORT.md "Run 12" writeup.**
 - Best model so far: **`checkpoints/nano-twic9`** — `nano` trained on twic900–997
   (22.6M positions), 13k-step cap (~0.3 epoch), ~3 h 48 m, best val 0.9767,
   T=0.860; held-out (twic999) acc **48.5%**, log-loss 0.988. Checkpoint is
