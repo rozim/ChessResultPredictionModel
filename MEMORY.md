@@ -44,7 +44,7 @@ record only what isn't obvious from the code, `CLAUDE.md`, `DESIGN.md`, or git.
 
 ## Current state (as of 2026-07)
 
-- **Elite Elo≥2400 all-TWIC dataset (`data/shards/`, being regenerated
+- **Elite Elo≥2400 all-TWIC dataset (`data/shards/`, regenerated
   2026-07-05):** numeric split — **train = issues < 1630** (twic210–1629, 1420
   files), **test = twic1630–1639** (10), **eval = twic1640–1649** (10); test/eval
   stamped `--seen-against` train. Recipe `--require-elo --min-elo 2400 --min-ply
@@ -72,7 +72,7 @@ record only what isn't obvious from the code, `CLAUDE.md`, `DESIGN.md`, or git.
   capacity finally pays off (confirms Run 3's hypothesis). Was still mildly
   UNDER-converged at the horizon (val improving at the last step), so more steps
   would likely widen the gap. Cost ~5.4× nano's wall-clock. Checkpoint gitignored.
-  **Deserves a REPORT.md "Run 11" writeup.** Takeaway: on this elite corpus,
+  Documented as REPORT.md Run 11. Takeaway: on this elite corpus,
   **more capacity now helps given the data scale** — worth trying `small` if a
   GPU becomes available (infeasible on this 4-core CPU box, ~2 weeks).
 - **`checkpoints/tiny-elite2400-2ep` (trained 2026-07-10, ~2.8 days CPU/MKL) —
@@ -87,11 +87,17 @@ record only what isn't obvious from the code, `CLAUDE.md`, `DESIGN.md`, or git.
   ceiling on this data. Clean monotonic trend nano→tiny-1ep→tiny-2ep: acc
   44.5→47.1→48.3, T 1.67→1.45→1.30, draw-hedging 60→53→47% (more
   capacity + convergence = sharper, better-calibrated, less-hedging). Checkpoint
-  gitignored. **Deserves a REPORT.md "Run 12" writeup.**
-- Best model so far: **`checkpoints/nano-twic9`** — `nano` trained on twic900–997
-  (22.6M positions), 13k-step cap (~0.3 epoch), ~3 h 48 m, best val 0.9767,
-  T=0.860; held-out (twic999) acc **48.5%**, log-loss 0.988. Checkpoint is
-  local/gitignored — retrain on the other machine if needed.
+  gitignored. Documented as REPORT.md Run 12.
+- **Capacity conclusion (Runs 10–12):** on the elite 7.77M corpus the optimal
+  model size scales with data — `tiny` (0.9M) > `nano` (0.15M), and 2 epochs >
+  1 (diminishing returns). **`tiny-elite2400-2ep` is the best elite model.** Next
+  lever is `small` (5M), GPU-only here. General lesson (vs Runs 3/6/7): "nano is
+  best" was a small-data artifact; re-test model size whenever the corpus grows.
+- **`checkpoints/nano-twic9`** — earlier best on a *different, broad-Elo* eval
+  (twic999): acc **48.5%** / log-loss 0.988 (T=0.860), `nano` on twic900–997
+  (22.6M positions, ~0.3 epoch). **Not comparable** to the elite checkpoints
+  above (different eval set + broad vs 2400-only Elo); kept as a reference point.
+  Local/gitignored.
 - Eval reports, beyond log-loss/acc/Brier/ECE: a **seen/unseen memorization
   split**, **ply-band** breakdown (buckets of 20), and **expected-score**
   (points) error. Key finding (REPORT Run 8/9): "seen" positions score *worse*
@@ -136,3 +142,13 @@ streaming/chunked loader rewrite of `prepare` + `read_shard_dir`. Two blockers:
   calibration over the full val set is a one-time cost.
 - Metal: batch ≥ 1024 hangs at step 0 (use ≤ 512); CPU keeps the system
   responsive for these small models.
+- **Linux 4-core box (MKL, batch 1024) measured rates:** `nano` ~4 s/step (1
+  epoch of 7.77M / 7588 steps ≈ 8.4 h); `tiny` ~18 s/step (1 epoch ≈ ~1.6 days,
+  2 epochs/15176 steps ≈ ~2.8 days). Rule of thumb: `tiny` ≈ 5× `nano` per step.
+- **MKL only bought ~1.25× over candle's default CPU gemm here** (2.49→1.97
+  s/step for nano) — small because the box is 4-core and the models' matmuls are
+  tiny. Needed a `hgemm_` link stub (candle 0.10 references the f16 symbol that
+  intel-mkl-src 2020.1 lacks; we train f32 so it's dead code). See commit 927ce3d.
+- **`small`/larger on CPU is impractical** (~2 weeks/epoch, extrapolated) — those
+  need a GPU. `data/*.log` and `data/*-restarts.count` are scratch from the
+  detached-training + hourly-loop workflow (all under gitignored `data/`).
