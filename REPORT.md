@@ -15,6 +15,7 @@ win/draw/loss model described in [`DESIGN.md`](DESIGN.md).
 - **Run 9** — scale-up + ply bands: **22.6M** train positions (twic900–999), nano capped at 13k steps (~0.3 epoch, ~3.8 h) → **48.5%** acc / 0.988 log-loss. New per-ply-band metrics show accuracy climbing **37% (openings) → ~66% (deep middlegame)**, which *explains* the Run-8 inversion: "seen" ≈ early-ply ≈ intrinsically hard, not memorized (see §Run 9).
 - **Run 10** — elite Elo≥2400 across **all 1440 TWIC issues**, nano trained **to convergence** (1-epoch cosine, batch 1024, ~8.4 h on a 4-core Linux/MKL box) → **44.5%** acc / 1.046 log-loss on a fresh, recent held-out set (twic1640–1649). Beats material (38.4%) and base-rate (31.9%) and is well-calibrated (ECE 2.4%), but draw-biased; the lower headline vs Run 4 is a less-draw-heavy eval (32% vs 48%) + Elo-free, not a regression (see §Run 10).
 - **Run 11** — **`tiny` (0.9M) to convergence on the same 7.77M elite set** (same recipe as Run 10 bar the config; ~2 days CPU) → **47.1%** acc / **1.022** log-loss, **beating nano (Run 10) on every held-out metric** (+2.6 pts acc, −0.024 log-loss, ECE 1.6% vs 2.4%) and less draw-biased. **First time in the run history a bigger model beats nano** — prior tests (Runs 3/6/7) were ≤0.78M positions; at 7.77M the capacity finally pays off, confirming Run 3 (see §Run 11).
+- **Run 12** — **`tiny` for 2 epochs** (Run 11 was mildly under-converged at 1 epoch): 15,176-step cosine, ~2.8 days → **48.3%** acc / **1.011** log-loss, beating 1-epoch tiny (Run 11) on every metric (+1.2 pts acc, −0.011 log-loss, ECE 1.5%, T 1.30 vs 1.45) and this time **fully converged**. Confirms the 2nd epoch helps but with **diminishing returns** (~1.75× cost for +1.2 pts). Best model to date; clean monotonic trend nano→tiny-1ep→tiny-2ep in accuracy, calibration, and draw-balance (see §Run 12).
 
 ## Run 1 — baseline (twic210 only, terminal positions included)
 
@@ -568,6 +569,74 @@ gap. Expected-score bias −0.013.
 - **Cost:** ~2 days vs nano's 8.4 h — **~5.4×** the wall-clock for +2.6 pts /
   −0.024 log-loss. A real, clean win, but an expensive one on a 4-core CPU;
   the natural next step (`small`, 5M) is ~2 weeks here and wants a GPU.
+
+## Run 12 — `tiny` for 2 epochs: the 2nd epoch helps (diminishing returns)
+
+Run 11 left `tiny` **mildly under-converged** (val still falling at its 1-epoch,
+7,588-step horizon). This run doubles the horizon to test whether convergence
+widens `tiny`'s edge.
+
+### Setup
+
+Identical to Run 11 **except `--epochs 2`** (so the cosine schedule re-stretches
+over the full run — not "Run 11 + more", since there is no `--resume` and Run 11's
+LR already hit 0): same `configs/tiny.toml` (0.9M), 7.77M elite train set, batch
+1024, lr 5e-4, val every 1000, MKL, `nice -19`.
+
+| | |
+|---|---|
+| **Horizon** | 2 epochs = **15,176-step cosine**, ~18 s/step, **~2.8 days** wall-clock, **0 restarts** |
+| **Convergence** | val fell to **1.0004 @ step 10k**, then plateaued (1.0023 / 1.0008 / 1.0015 / 1.0010 / 1.0014 / 1.0014) — **converged**, unlike Run 11. Fitted **T = 1.295** (Run 11 1.449, nano 1.668) |
+
+### Held-out results (twic1640–1649, 94,567 positions) — the three-way
+
+| Metric | **tiny 2-epoch** | tiny 1-epoch (Run 11) | nano (Run 10) | Material |
+|---|---|---|---|---|
+| **Accuracy** | **48.3%** | 47.1% | 44.5% | 38.4% |
+| **Log-loss** ↓ | **1.011** | 1.022 | 1.046 | 1.089 |
+| **Brier** ↓ | **0.607** | 0.615 | 0.631 | 0.660 |
+| **ECE** ↓ | **1.5%** | 1.6% | 2.4% | 2.1% |
+| **Score MAE** ↓ | **0.329** | 0.330 | 0.336 | 0.344 |
+| **Fitted T** | **1.295** | 1.449 | 1.668 | — |
+
+Confusion (rows = true; recall win **51.1%** / draw **61.8%** / loss **31.1%**):
+
+```
+          win   draw   loss
+win     18027  13551   3703
+draw     8342  18652   3213
+loss     8058  11983   9038
+```
+
+Ply bands (calibrated): **41.4%** (20–39) → 50.6% (40–59) → 54.1% (60–79) →
+**56.8%** (80–99). Seen/unseen (7.4% seen): **46.9% vs 48.5%** — no memorization
+gap. Expected-score bias **+0.0008** (essentially unbiased; best of all runs).
+
+### Interpretation (Run 12)
+
+- **The 2nd epoch helps — on every metric, but modestly.** `tiny` 2-epoch beats
+  1-epoch `tiny` (Run 11) by +1.2 pts acc, −0.011 log-loss, lower Brier, and
+  slightly better calibration. And it **converged** (val plateaued; Run 11 was
+  still dropping), so this is `tiny`'s ceiling on this data, not a lower bound.
+- **Diminishing returns, quantified:** ~2.8 days vs ~1.6 days (**~1.75×**) for
+  +1.2 pts / −0.011 log-loss — about half the per-cost gain of Run 11's +2.6 pts
+  over nano. Convergence is worth it once, but a 3rd epoch almost certainly isn't.
+- **The cleanest signal is the monotonic trend** across the three elite runs — as
+  we add capacity (nano→tiny) then training (1→2 epochs), the model gets sharper,
+  better-calibrated, and **progressively stops hedging to draws**:
+
+  | | acc | log-loss | fitted T | predicts "draw" | win recall |
+  |---|---|---|---|---|---|
+  | nano (Run 10) | 44.5% | 1.046 | 1.67 | 60% | 38% |
+  | tiny 1-epoch (Run 11) | 47.1% | 1.022 | 1.45 | 53% | 41% |
+  | **tiny 2-epoch (Run 12)** | **48.3%** | **1.011** | **1.30** | **47%** | **51%** |
+
+  The falling temperature and draw-rate show the extra capacity/training is spent
+  on **confidence and decisiveness**, not memorization (seen≈unseen throughout).
+- **Bottom line:** `checkpoints/tiny-elite2400-2ep` is the **best model to date**
+  on the elite set. The next lever is more capacity (`small`, 5M), which needs a
+  GPU (~2 weeks on this 4-core CPU box); `--draw-weighting` remains untried if
+  balanced win/loss recall is wanted over calibration.
 
 ## Notes on the M1 GPU path
 
