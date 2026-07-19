@@ -86,8 +86,10 @@ record only what isn't obvious from the code, `CLAUDE.md`, `DESIGN.md`, or git.
   helped, modestly (~1.75× cost for +1.2 pts) — diminishing returns, near tiny's
   ceiling on this data. Clean monotonic trend nano→tiny-1ep→tiny-2ep: acc
   44.5→47.1→48.3, T 1.67→1.45→1.30, draw-hedging 60→53→47% (more
-  capacity + convergence = sharper, better-calibrated, less-hedging). Checkpoint
-  gitignored. Documented as REPORT.md Run 12.
+  capacity + convergence = sharper, better-calibrated, less-hedging). Documented
+  as REPORT.md Run 12. **Weights ARE committed** (only 3.5 MB) at
+  `models/tiny-elite2400-2ep/` — the one model checkpoint kept in git (everything
+  else under `checkpoints/` stays gitignored). Use `--checkpoint models/tiny-elite2400-2ep`.
 - **Capacity conclusion (Runs 10–12):** on the elite 7.77M corpus the optimal
   model size scales with data — `tiny` (0.9M) > `nano` (0.15M), and 2 epochs >
   1 (diminishing returns). **`tiny-elite2400-2ep` is the best elite model.** Next

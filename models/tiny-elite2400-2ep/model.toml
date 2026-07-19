@@ -1,0 +1,16 @@
+name = "tiny"
+
+[model]
+d_model = 128
+layers = 4
+num_heads = 4
+ffn_dim = 512
+head_hidden = 64
+dropout = 0.1
+pos_encoding = "gab"
+
+[gab]
+avg_pool = true
+per_square_dim = 0
+compress_dim = 128
+templates = 16
